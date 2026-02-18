@@ -42,6 +42,7 @@ class Orchestrator:
         messenger.set_on_command("stop", self._handle_stop_command)
         messenger.set_on_command("complete", self._handle_complete_command)
         messenger.set_on_command("status", self._handle_status_command)
+        messenger.set_on_command("tunnel", self._handle_tunnel_command)
         messenger.set_on_unknown_command(self._handle_unknown_command)
         messenger.set_on_permission_response(self._handle_permission_response)
 
@@ -342,14 +343,91 @@ class Orchestrator:
             return
 
         alive = "✅ Running" if session.process.is_alive else "🔴 Stopped"
+        tunnel_info = ""
+        if session.tunnel and session.tunnel.is_alive:
+            tunnel_info = f"\nTunnel: {session.tunnel.public_url}"
         await self._messenger.send_message(
             channel_id,
             f"📊 Session: {session.name}\n"
             f"State: {session.state}\n"
             f"Process: {alive}\n"
             f"Project: {session.project_name} ({session.project_path})\n"
-            f"Worktree: {session.worktree_path}",
+            f"Worktree: {session.worktree_path}{tunnel_info}",
         )
+
+    async def _handle_tunnel_command(
+        self, channel_id: str, args: list[str]
+    ) -> None:
+        """/tunnel [stop] — start or stop a dev server tunnel."""
+        from afk.core.tunnel import TunnelProcess, detect_dev_server
+
+        session = self._sm.get_session(channel_id)
+        if not session:
+            await self._messenger.send_message(
+                channel_id, "⚠️ No session linked to this topic."
+            )
+            return
+
+        # /tunnel stop
+        if args and args[0].lower() == "stop":
+            if not session.tunnel:
+                await self._messenger.send_message(
+                    channel_id, "No active tunnel to stop."
+                )
+                return
+            await session.tunnel.stop()
+            session.tunnel = None
+            await self._messenger.send_message(
+                channel_id, "🔴 Tunnel stopped."
+            )
+            return
+
+        # Already running — resend URL
+        if session.tunnel and session.tunnel.is_alive:
+            await self._messenger.send_message(
+                channel_id,
+                f"Tunnel already running: {session.tunnel.public_url}",
+                link_url=session.tunnel.public_url,
+                link_label="Open tunnel",
+            )
+            return
+
+        # Detect project type
+        config = detect_dev_server(session.worktree_path)
+        if not config:
+            await self._messenger.send_message(
+                channel_id,
+                "❌ Could not detect dev server.\n"
+                "Ensure the worktree has a package.json with a \"dev\" script.",
+            )
+            return
+
+        msg_id = await self._messenger.send_message(
+            channel_id,
+            f"⏳ Starting {config.framework} dev server (port {config.port}) "
+            f"+ cloudflared tunnel...",
+            silent=True,
+        )
+
+        try:
+            tunnel = TunnelProcess()
+            url = await tunnel.start(session.worktree_path, config)
+            session.tunnel = tunnel
+
+            await self._messenger.edit_message(
+                channel_id, msg_id,
+                f"✅ Tunnel active ({config.framework}, port {config.port})",
+            )
+            await self._messenger.send_message(
+                channel_id,
+                url,
+                link_url=url,
+                link_label="Open in browser",
+            )
+        except RuntimeError as e:
+            await self._messenger.edit_message(
+                channel_id, msg_id, f"❌ Tunnel failed: {e}"
+            )
 
     async def _handle_unknown_command(
         self, channel_id: str, command_text: str
@@ -364,7 +442,8 @@ class Orchestrator:
             "/sessions — list active sessions\n"
             "/stop — stop current session\n"
             "/complete — merge & cleanup session\n"
-            "/status — check session state",
+            "/status — check session state\n"
+            "/tunnel — start dev server tunnel (stop: /tunnel stop)",
         )
 
     async def _handle_permission_response(

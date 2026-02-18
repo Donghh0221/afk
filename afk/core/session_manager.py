@@ -21,6 +21,8 @@ from afk.core.git_worktree import (
     remove_worktree,
 )
 
+from afk.core.tunnel import TunnelProcess
+
 if TYPE_CHECKING:
     from afk.messenger.telegram.adapter import TelegramAdapter
     from afk.storage.project_store import ProjectStore
@@ -40,6 +42,7 @@ class Session:
     state: str = "idle"  # idle | running | waiting_permission | stopped
     verbose: bool = False
     created_at: float = field(default_factory=time.time)
+    tunnel: TunnelProcess | None = None
     _response_task: asyncio.Task | None = field(default=None, repr=False)
 
 
@@ -132,6 +135,11 @@ class SessionManager:
         if session._response_task:
             session._response_task.cancel()
 
+        # Stop tunnel if active
+        if session.tunnel:
+            await session.tunnel.stop()
+            session.tunnel = None
+
         # Stop Claude process first (releases file handles on worktree)
         await session.process.stop()
         session.claude_session_id = session.process.session_id
@@ -161,17 +169,22 @@ class SessionManager:
         if not session:
             return False, "No session found for this topic."
 
-        # 1. Stop Claude process (releases file handles on worktree)
+        # 1. Stop tunnel if active
+        if session.tunnel:
+            await session.tunnel.stop()
+            session.tunnel = None
+
+        # 2. Stop Claude process (releases file handles on worktree)
         session.state = "stopped"
         if session._response_task:
             session._response_task.cancel()
         await session.process.stop()
         session.claude_session_id = session.process.session_id
 
-        # 2. Commit any uncommitted changes in the worktree
+        # 3. Commit any uncommitted changes in the worktree
         await commit_worktree_changes(session.worktree_path, session.name)
 
-        # 3. Merge branch into main (rebase in worktree, remove worktree, ff-merge)
+        # 4. Merge branch into main (rebase in worktree, remove worktree, ff-merge)
         branch_name = f"afk/{session.name}"
         success, merge_output = await merge_branch_to_main(
             session.project_path, branch_name, session.worktree_path
@@ -194,14 +207,14 @@ class SessionManager:
                 f"or use /stop to discard changes."
             )
 
-        # 4. Delete the branch (worktree already removed by merge_branch_to_main)
+        # 5. Delete the branch (worktree already removed by merge_branch_to_main)
         await delete_branch(session.project_path, branch_name)
 
-        # 5. Clean up session state
+        # 6. Clean up session state
         self._save_sessions()
         del self._sessions[channel_id]
 
-        # 6. Delete the forum topic
+        # 7. Delete the forum topic
         try:
             await self._messenger.close_session_channel(channel_id)
         except Exception:
@@ -259,6 +272,9 @@ class SessionManager:
         finally:
             if session.state != "stopped":
                 session.state = "stopped"
+                if session.tunnel:
+                    await session.tunnel.stop()
+                    session.tunnel = None
                 logger.info("Session ended: %s", session.name)
                 try:
                     await self._messenger.send_message(
