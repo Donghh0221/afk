@@ -34,6 +34,7 @@ class Orchestrator:
         messenger.set_on_command("new", self._handle_new_command)
         messenger.set_on_command("sessions", self._handle_sessions_command)
         messenger.set_on_command("stop", self._handle_stop_command)
+        messenger.set_on_command("complete", self._handle_complete_command)
         messenger.set_on_command("status", self._handle_status_command)
         messenger.set_on_permission_response(self._handle_permission_response)
 
@@ -229,6 +230,36 @@ class Orchestrator:
         await self._messenger.send_message(
             channel_id, f"🔴 Session stopped: {session.name}"
         )
+
+    async def _handle_complete_command(
+        self, channel_id: str, args: list[str]
+    ) -> None:
+        """/complete — merge session branch into main and clean up."""
+        session = self._sm.get_session(channel_id)
+        if not session:
+            await self._messenger.send_message(
+                channel_id, "⚠️ No session linked to this topic."
+            )
+            return
+
+        await self._messenger.send_message(
+            channel_id,
+            f"⏳ Merging branch afk/{session.name} into main...",
+            silent=True,
+        )
+
+        success, message = await self._sm.complete_session(channel_id)
+
+        if success:
+            # Topic is deleted — send confirmation to General
+            await self._messenger.send_message(
+                "general", f"✅ {message}"
+            )
+        else:
+            # Session still alive — send error to session topic
+            await self._messenger.send_message(
+                channel_id, f"❌ {message}"
+            )
 
     async def _handle_status_command(
         self, channel_id: str, args: list[str]
