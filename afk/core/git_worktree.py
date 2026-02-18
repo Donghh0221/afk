@@ -26,6 +26,56 @@ async def is_git_repo(project_path: str) -> bool:
     return code == 0
 
 
+async def merge_branch_to_main(
+    project_path: str,
+    branch_name: str,
+) -> tuple[bool, str]:
+    """Merge branch into main in the main repo.
+
+    Returns (success, message). On conflict the merge is aborted
+    so main stays clean.
+    """
+    # Abort any in-progress merge (defensive cleanup from prior crash)
+    await _run_git(["merge", "--abort"], cwd=project_path)
+
+    code, stdout, stderr = await _run_git(
+        ["merge", branch_name, "--no-edit"],
+        cwd=project_path,
+    )
+    if code != 0:
+        await _run_git(["merge", "--abort"], cwd=project_path)
+        return False, stderr or stdout
+    return True, stdout
+
+
+async def remove_worktree_after_merge(
+    project_path: str,
+    worktree_path: str,
+    branch_name: str,
+) -> None:
+    """Remove worktree and delete branch after a successful merge.
+
+    Uses 'branch -d' (lowercase) since the branch has been merged.
+    """
+    code, _, stderr = await _run_git(
+        ["worktree", "remove", "--force", worktree_path],
+        cwd=project_path,
+    )
+    if code != 0:
+        logger.warning(
+            "git worktree remove failed for %s: %s", worktree_path, stderr
+        )
+
+    code, _, stderr = await _run_git(
+        ["branch", "-d", branch_name],
+        cwd=project_path,
+    )
+    if code != 0:
+        logger.warning(
+            "git branch -d failed for %s: %s", branch_name, stderr
+        )
+
+
 async def create_worktree(
     project_path: str,
     worktree_path: str,

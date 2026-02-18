@@ -14,7 +14,9 @@ from afk.core.git_worktree import (
     create_worktree,
     is_git_repo,
     list_afk_worktrees,
+    merge_branch_to_main,
     remove_worktree,
+    remove_worktree_after_merge,
 )
 
 if TYPE_CHECKING:
@@ -148,6 +150,63 @@ class SessionManager:
             logger.warning("Failed to delete topic for %s", session.name)
         logger.info("Stopped session: %s", session.name)
         return True
+
+    async def complete_session(self, channel_id: str) -> tuple[bool, str]:
+        """Complete a session: merge branch into main, then clean up.
+
+        On merge failure the session is left intact so the user can resolve.
+        """
+        session = self._sessions.get(channel_id)
+        if not session:
+            return False, "No session found for this topic."
+
+        # 1. Stop Claude process (releases file handles on worktree)
+        session.state = "stopped"
+        if session._response_task:
+            session._response_task.cancel()
+        await session.process.stop()
+        session.claude_session_id = session.process.session_id
+
+        # 2. Merge branch into main
+        branch_name = f"afk/{session.name}"
+        success, merge_output = await merge_branch_to_main(
+            session.project_path, branch_name
+        )
+
+        if not success:
+            # Restart Claude so session stays usable
+            session.state = "idle"
+            session.process = ClaudeProcess()
+            await session.process.start(
+                session.worktree_path, session.claude_session_id
+            )
+            session._response_task = asyncio.create_task(
+                self._read_loop(session)
+            )
+            return False, (
+                f"Merge failed for branch '{branch_name}'.\n"
+                f"Error: {merge_output}\n\n"
+                f"Session remains active. Resolve conflicts and try again, "
+                f"or use /stop to discard changes."
+            )
+
+        # 3. Remove worktree and branch
+        await remove_worktree_after_merge(
+            session.project_path, session.worktree_path, branch_name
+        )
+
+        # 4. Clean up session state
+        self._save_sessions()
+        del self._sessions[channel_id]
+
+        # 5. Delete the forum topic
+        try:
+            await self._messenger.close_session_channel(channel_id)
+        except Exception:
+            logger.warning("Failed to delete topic for %s", session.name)
+
+        logger.info("Completed session: %s (merged into main)", session.name)
+        return True, f"Session '{session.name}' completed. Branch merged into main."
 
     def get_session(self, channel_id: str) -> Session | None:
         """Look up session by channel ID."""
