@@ -193,6 +193,49 @@
     font-size: 12px;
     text-align: center;
   }
+  .project-group {
+    border-bottom: 1px solid var(--border);
+  }
+  .project-group:last-child {
+    border-bottom: none;
+  }
+  .project-header {
+    padding: 8px 16px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    user-select: none;
+    background: var(--bg);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .project-header:hover {
+    color: var(--text);
+  }
+  .project-header .arrow {
+    font-size: 10px;
+    transition: transform 0.15s;
+    margin-right: 6px;
+  }
+  .project-header.collapsed .arrow {
+    transform: rotate(-90deg);
+  }
+  .project-header .session-count {
+    font-weight: 400;
+    color: var(--text-dim);
+    font-size: 10px;
+    margin-left: 6px;
+  }
+  .project-sessions.hidden {
+    display: none;
+  }
   .resize-handle {
     height: 4px;
     cursor: ns-resize;
@@ -209,7 +252,7 @@
 </header>
 <div class="main">
   <div class="sidebar">
-    <div class="sidebar-header">Sessions</div>
+    <div class="sidebar-header">Projects</div>
     <div class="session-list" id="session-list">
       <div class="no-sessions">No active sessions</div>
     </div>
@@ -234,6 +277,7 @@
   let selectedChannel = null;
   let lastMsgTs = 0;
   let sessions = [];
+  let collapsedProjects = {};
 
   const sessionListEl = document.getElementById('session-list');
   const messagesEl = document.getElementById('messages');
@@ -281,25 +325,65 @@
     renderSessions();
   }
 
+  function groupByProject(sessions) {
+    const groups = {};
+    const order = [];
+    for (const s of sessions) {
+      const key = s.project_name || '(no project)';
+      if (!groups[key]) {
+        groups[key] = [];
+        order.push(key);
+      }
+      groups[key].push(s);
+    }
+    return order.map(name => ({ name, sessions: groups[name] }));
+  }
+
+  function toggleProject(projectName) {
+    collapsedProjects[projectName] = !collapsedProjects[projectName];
+    renderSessions();
+  }
+
   function renderSessions() {
     if (sessions.length === 0) {
       sessionListEl.innerHTML = '<div class="no-sessions">No active sessions</div>';
       return;
     }
-    sessionListEl.innerHTML = sessions.map(s => {
-      const active = s.channel_id === selectedChannel ? ' active' : '';
-      return `<div class="session-item${active}" data-channel="${s.channel_id}">
-        <div class="session-name">${esc(s.name)}</div>
-        <div class="session-meta">
-          <span class="state-dot ${s.state}"></span>
-          <span>${s.state}</span>
-          <span style="margin-left:auto">${esc(s.project_name)}</span>
+
+    const groups = groupByProject(sessions);
+
+    sessionListEl.innerHTML = groups.map(group => {
+      const isCollapsed = collapsedProjects[group.name] === true;
+      const collapsedClass = isCollapsed ? ' collapsed' : '';
+      const hiddenClass = isCollapsed ? ' hidden' : '';
+
+      const sessionsHtml = group.sessions.map(s => {
+        const active = s.channel_id === selectedChannel ? ' active' : '';
+        return `<div class="session-item${active}" data-channel="${s.channel_id}">
+          <div class="session-name">${esc(s.name)}</div>
+          <div class="session-meta">
+            <span class="state-dot ${s.state}"></span>
+            <span>${s.state}</span>
+          </div>
+        </div>`;
+      }).join('');
+
+      return `<div class="project-group">
+        <div class="project-header${collapsedClass}" data-project="${esc(group.name)}">
+          <span><span class="arrow">&#9662;</span>${esc(group.name)}<span class="session-count">(${group.sessions.length})</span></span>
+        </div>
+        <div class="project-sessions${hiddenClass}">
+          ${sessionsHtml}
         </div>
       </div>`;
     }).join('');
 
     sessionListEl.querySelectorAll('.session-item').forEach(el => {
       el.addEventListener('click', () => selectSession(el.dataset.channel));
+    });
+
+    sessionListEl.querySelectorAll('.project-header').forEach(el => {
+      el.addEventListener('click', () => toggleProject(el.dataset.project));
     });
   }
 
