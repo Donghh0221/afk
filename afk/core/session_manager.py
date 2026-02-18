@@ -95,6 +95,11 @@ class SessionManager:
         session.claude_session_id = session.process.session_id
         self._save_sessions()
         del self._sessions[channel_id]
+        # Delete the forum topic
+        try:
+            await self._messenger.close_session_channel(channel_id)
+        except Exception:
+            logger.warning("Failed to delete topic for %s", session.name)
         logger.info("Stopped session: %s", session.name)
         return True
 
@@ -156,6 +161,14 @@ class SessionManager:
                     )
                 except Exception:
                     pass
+                try:
+                    await self._messenger.close_session_channel(
+                        session.channel_id
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to delete topic for %s", session.name
+                    )
 
     def _save_sessions(self) -> None:
         """Save session data for recovery."""

@@ -32,6 +32,10 @@ class MessengerPort(Protocol):
         """Create a session-dedicated channel. Returns: channel_id."""
         ...
 
+    async def close_session_channel(self, channel_id: str) -> None:
+        """Delete/close a session-dedicated channel."""
+        ...
+
     async def start(self) -> None:
         """Start messenger connection (polling, etc.)."""
         ...
