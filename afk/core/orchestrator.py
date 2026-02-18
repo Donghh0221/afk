@@ -226,10 +226,10 @@ class Orchestrator:
             )
             return
 
-        await self._sm.stop_session(channel_id)
         await self._messenger.send_message(
             channel_id, f"🔴 Session stopped: {session.name}"
         )
+        await self._sm.stop_session(channel_id)
 
     async def _handle_complete_command(
         self, channel_id: str, args: list[str]
