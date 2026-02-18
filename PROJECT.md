@@ -134,95 +134,119 @@ When Claude Code requests tool permission, displayed as inline buttons:
 - 5-minute timeout, auto-deny on expiry
 - Voice response ("allow"/"deny") also supported
 
-### 1.5 Trust Levels
-
-Can't use it if approval requests come every 5 minutes during a walk. Need adjustable autonomy for the situation.
-
-| Level | Name | Auto-approval Scope | Use Case |
-|---|---|---|---|
-| 1 | 🔒 Strict | None (ask everything) | Production work, dangerous operations |
-| 2 | 🔓 Normal | Auto-approve file read/write | General development (default) |
-| 3 | 🚀 YOLO | Auto-approve everything (except `rm -rf`, `git push`) | Walk mode, vibe coding |
-
-- `/trust <level>` — change trust level per session
-- High-risk commands (`rm`, `git push`, `curl | sh`, etc.) always require approval at all levels
-
-### 1.6 Cost Control
-
-Cost awareness fades when working remotely. Safety nets needed.
-
-- Per-session real-time cost display (on task completion)
-- `/cost` — query session cumulative cost
-- Daily budget configurable (`/budget $20`)
-- Auto-pause + notification on budget exceeded
-
-### 1.7 Thrashing Detection
-
-Prevent the agent from spinning its wheels and burning costs.
-
-Detection conditions:
-- Same file modified 3+ times
-- Same error causes repeated test failures
-- Cost spikes in a short period ($5+ in minutes)
-
-On detection:
-- Auto-pause
-- Notification: "🔴 Agent has been stuck on the same error for 10 minutes. Want to intervene?"
-- Current situation summary provided
-
 ---
 
-## Phase 2 — Verification
+## Phase 2 — Remote Verification
 
-Verify agent output remotely.
+The core problem: AFK lets you **command** agents remotely, but you can't **verify** what they built without walking back to the terminal. Verification must work across project types (web, iOS, Android) and across parallel sessions.
 
-### 2.1 Local App Tunneling
+### Design Decisions
 
-- When agent starts a localhost server, auto-generate a public URL
-- `/tunnel on` → send `https://abc123.tunnel.dev` link via Telegram
-- Access directly from phone to verify
-- Uses cloudflared or ngrok, auto-managed per session
+**Session ↔ Tunnel relationship**
 
-### 2.2 Screenshots / Preview
+Each session runs in an isolated worktree. A session may or may not run a dev server. When it does, the port belongs to that session.
 
-- `/screenshot` → capture current local app via headless browser, send image
-- Mobile/desktop viewport toggle
-- "What does it look like now?" → instant screenshot
+- **1 tunnel per session** — each `/tunnel` is scoped to the session topic where it's called
+- Tunnel lifecycle is tied to the session: `/stop` or `/complete` kills the tunnel too
+- Multiple sessions can each have their own tunnel simultaneously (different ports, different URLs)
+- If a session doesn't run a server, no tunnel is needed
 
-### 2.3 File Transfer
+**Project type determines verification method**
 
-- Download files created/modified by agent via Telegram
-- Upload files from Telegram → apply to project
-- `/diff` → list of files changed in this session + diff summary
+Not all projects are web apps. The verification strategy depends on what the agent is building:
 
-### 2.4 Mobile App Testing
-
-Web apps can be verified via tunneling, but native mobile apps need framework-specific approaches.
-
-| Framework | Method | Difficulty |
+| Project Type | Verification Method | How it Works |
 |---|---|---|
-| React Native (Expo) | Expo dev server + tunneling → verify on phone via Expo Go | Low |
-| Flutter | Web build + tunneling (mobile UI approximation) | Medium |
-| Native Android | APK build → send file via messenger → install on phone | Medium |
-| Native iOS | Simulator screenshot → send / TestFlight automation | High |
+| Web (React, Next, Express, etc.) | **Tunnel** | cloudflared quick tunnel → public HTTPS URL → open in phone browser |
+| React Native (Expo) | **Tunnel + Expo Go** | Expo dev server tunneled → scan QR or open URL in Expo Go app |
+| iOS (Swift/SwiftUI) | **Simulator Screenshot** | Build & run on iOS Simulator → capture screenshot → send via Telegram |
+| Android (Kotlin/Compose) | **Emulator Screenshot + APK** | Build & run on emulator → screenshot, or build APK → send via Telegram → install |
+| Flutter | **Web build + Tunnel** or **Simulator Screenshot** | Flutter web for quick check, or simulator/emulator for native feel |
+| CLI / Backend / Library | **Output capture** | Run command → capture stdout/stderr → send result via Telegram |
 
-Additional options:
-- Simulator/emulator screen capture → send as image
-- Cloud device farm integration (BrowserStack, Firebase Test Lab)
+**Incremental approach**: Start with Tunnel (covers web + Expo), then Screenshot (covers iOS/Android simulators), then Build Artifact transfer (APK/IPA). Each layer adds coverage for more project types.
 
-### 2.5 Terminal Client
+### 2.1 Tunneling (`/tunnel`)
 
-CLI tool for directly accessing sessions from MacBook.
+Expose a localhost port to a public HTTPS URL via cloudflared quick tunnel.
 
-```bash
-afk list                        # List active sessions
-afk attach MyApp-session-1      # Attach to session (like tmux attach)
-afk detach                      # Detach from session
+```
+/tunnel 3000
+→ Starts cloudflared tunnel → https://xxx.trycloudflare.com
+→ URL sent to session topic
+→ Open on phone, verify immediately
+
+/tunnel
+→ (no port specified) Auto-scan common ports (3000, 5173, 8080, 4200, 8000, 19000)
+→ Tunnel the first open port found
+
+/tunnel off
+→ Kill tunnel process for this session
 ```
 
-- Connect from MacBook to sessions running on Mac mini
-- Richer interface than Telegram (full terminal)
-- Ideal for detailed review, debugging, finishing touches
+Implementation:
+- cloudflared subprocess per session, managed alongside ClaudeProcess
+- Parse URL from cloudflared stderr (`INF |  https://xxx.trycloudflare.com`)
+- No account/config needed (quick tunnel mode)
+- System requirement: `brew install cloudflared`
+
+Edge cases:
+- Port not yet open when `/tunnel` is called → retry with backoff, or watch for port
+- Session uses multiple ports (e.g. frontend 3000 + backend 8000) → `/tunnel 3000`, `/tunnel 8000` both allowed per session
+- Claude restarts the dev server on a different port → user re-runs `/tunnel`
+
+### 2.2 Screenshot (`/screenshot`)
+
+Capture what's running locally and send as an image via Telegram.
+
+```
+/screenshot
+→ Captures localhost:{tunneled_port} via headless browser
+→ Sends image to session topic
+
+/screenshot http://localhost:8080/dashboard
+→ Captures specific URL
+
+/screenshot simulator
+→ Captures iOS Simulator or Android Emulator screen
+```
+
+Implementation:
+- **Web**: Playwright headless → screenshot → send via `messenger.send_photo()`
+- **iOS Simulator**: `xcrun simctl io booted screenshot` → send image
+- **Android Emulator**: `adb exec-out screencap -p` → send image
+- Viewport: mobile (390×844) by default, `/screenshot --desktop` for 1280×720
+
+### 2.3 Diff & File Transfer (`/diff`)
+
+Review code changes before merging.
+
+```
+/diff
+→ git diff summary for this session's worktree
+→ Files changed, lines added/deleted
+→ Sent as formatted message (or file if too long)
+
+/file path/to/file.ts
+→ Download a specific file from the worktree via Telegram
+```
+
+### 2.4 Build Artifacts
+
+For native mobile apps, send installable artifacts.
+
+```
+/build
+→ Detect project type, run appropriate build command
+→ Send artifact via Telegram
+
+Web:     Build → deploy preview (or just use tunnel)
+Android: ./gradlew assembleDebug → send APK
+iOS:     xcodebuild → send to TestFlight (requires setup)
+Expo:    eas build → send URL
+```
+
+This is the hardest to generalize. Start with Android APK (straightforward), defer iOS/TestFlight.
 
 ---
 

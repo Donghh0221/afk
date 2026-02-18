@@ -3,7 +3,7 @@
 ## Design Principles
 
 - **Messenger-agnostic**: Core logic depends only on the MessengerPort interface. Swappable between Telegram/Slack/native app.
-- **STT-agnostic**: Speech recognition abstracted via STTPort. Swappable between Whisper local/API.
+- **STT-agnostic**: Speech recognition abstracted via STTPort. Swappable between Whisper API/local/Deepgram.
 - **Always-on daemon**: Runs 24/7 as a launchd daemon on Mac mini. Accessible from any device.
 
 ## System Architecture
@@ -51,41 +51,35 @@
 
 ```
 afk/
-├── main.py                     # Entry point, adapter selection, daemon startup
-├── config.py                   # Environment settings (tokens, group ID, paths, etc.)
+├── main.py                     # Entry point, component wiring, daemon startup/shutdown
+├── config.py                   # Environment settings (tokens, group ID, dashboard port, OpenAI key)
 │
 ├── messenger/                  # Messenger abstraction layer
-│   ├── __init__.py
 │   ├── port.py                 # MessengerPort (abstract interface)
 │   └── telegram/               # Telegram adapter (MVP)
-│       ├── __init__.py
-│       ├── adapter.py          # TelegramAdapter (MessengerPort implementation)
-│       ├── handlers.py         # Telegram-specific handlers (commands, callbacks)
-│       └── formatter.py        # Telegram message formatting (markdown, splitting)
+│       └── adapter.py          # TelegramAdapter (forum topics, permission buttons, deep-links)
 │
 ├── core/                       # Messenger-independent business logic
-│   ├── __init__.py
-│   ├── orchestrator.py         # Handler logic (project/session/message routing)
-│   ├── session_manager.py      # Session lifecycle (create, query, stop, restore)
-│   ├── claude_process.py       # Claude Code subprocess wrapper
-│   ├── permission_bridge.py    # Permission request ↔ MessengerPort bridge
-│   ├── trust_manager.py        # Trust level management, risk assessment
-│   └── cost_tracker.py         # Cost tracking, budget management, thrashing detection
+│   ├── orchestrator.py         # Message routing, command handling, Claude response processing
+│   ├── session_manager.py      # Session lifecycle (create, stop, complete, restore, persist)
+│   ├── claude_process.py       # Claude Code subprocess wrapper (stream-json protocol)
+│   └── git_worktree.py         # Git worktree/branch operations, AI commit messages
 │
 ├── voice/                      # Voice abstraction layer
-│   ├── __init__.py
 │   ├── port.py                 # STTPort (abstract interface)
-│   └── whisper_local.py        # Whisper local implementation (MVP)
+│   └── whisper_api.py          # OpenAI Whisper API implementation
+│
+├── dashboard/                  # Web dashboard
+│   ├── server.py               # aiohttp web server + API routes
+│   ├── message_store.py        # Per-session in-memory message history
+│   └── index.html              # Single-page dashboard (HTML+CSS+JS)
 │
 ├── storage/
-│   ├── __init__.py
 │   └── project_store.py        # Project registration CRUD (JSON file)
 │
-├── data/                       # Runtime data (gitignored)
-│   ├── projects.json
-│   └── sessions.json
-│
-└── requirements.txt
+└── data/                       # Runtime data (gitignored)
+    ├── projects.json
+    └── sessions.json
 ```
 
 ## Core Component Details
@@ -109,14 +103,17 @@ class MessengerPort(Protocol):
         """
         ...
 
+    async def edit_message(
+        self, channel_id: str, message_id: str, text: str
+    ) -> None:
+        """Edit an existing message."""
+        ...
+
     async def send_permission_request(
         self, channel_id: str, tool_name: str, tool_args: str,
-        options: list[str]
+        request_id: str
     ) -> str:
-        """
-        Display permission approval request with choices.
-        Returns: user's selected option
-        """
+        """Display permission approval request with Allow/Deny buttons."""
         ...
 
     async def create_session_channel(self, name: str) -> str:
@@ -127,24 +124,16 @@ class MessengerPort(Protocol):
         """
         ...
 
-    async def send_file(self, channel_id: str, file_path: str) -> None:
-        """Send a file"""
+    async def get_channel_link(self, channel_id: str) -> str:
+        """Return a deep-link URL for the channel."""
         ...
 
-    async def download_voice(self, voice_file_id: str) -> str:
+    async def close_session_channel(self, channel_id: str) -> None:
+        """Delete/close a session channel."""
+        ...
+
+    async def download_voice(self, file_id: str) -> str:
         """Download voice message. Returns: local file path"""
-        ...
-
-    def on_text_message(self, callback: Callable) -> None:
-        """Register text message callback"""
-        ...
-
-    def on_voice_message(self, callback: Callable) -> None:
-        """Register voice message callback"""
-        ...
-
-    def on_command(self, command: str, callback: Callable) -> None:
-        """Register command handler"""
         ...
 
     async def start(self) -> None:
@@ -164,16 +153,24 @@ Telegram forum topic-based implementation.
 class TelegramAdapter(MessengerPort):
     """
     Mapping:
-      channel_id → forum topic message_thread_id
+      channel_id → forum topic message_thread_id (prefixed with "tg_")
       send_message(silent=True) → disable_notification=True
       send_permission_request → InlineKeyboardMarkup + callback_query
       create_session_channel → create_forum_topic()
+      get_channel_link → tg://privatepost deep-link
+      close_session_channel → delete_forum_topic()
+      download_voice → bot.get_file() + download to temp
     """
 ```
 
 Notification strategy:
 - `silent=True` → `disable_notification=True` (log-like: streaming responses, status changes)
 - `silent=False` → normal notification (permission requests, errors, task completion)
+
+Message handling:
+- Messages over 4096 chars are split at newline boundaries
+- Callback handlers for text, voice, commands, and permission button presses
+- Deep-links use `tg://privatepost` scheme for reliable iOS app opening
 
 ### 1. STTPort (`voice/port.py`)
 
@@ -187,14 +184,14 @@ class STTPort(Protocol):
         """Audio file → text. Format conversion handled internally."""
         ...
 
-class WhisperLocalSTT(STTPort):
-    """Whisper local model (MVP). Base model recommended for Mac M-chip."""
+class WhisperAPISTT(STTPort):
+    """OpenAI Whisper API implementation. Supports ogg/opus directly (no ffmpeg needed)."""
 
-    def __init__(self, model_name: str = "base"):
-        """Load model"""
+    def __init__(self, api_key: str):
+        """Initialize OpenAI client"""
 
     async def transcribe(self, audio_path: str) -> str:
-        """ffmpeg (ogg→wav) → Whisper → text"""
+        """Upload audio to Whisper API → text"""
 ```
 
 ### 2. ClaudeProcess (`core/claude_process.py`)
@@ -207,12 +204,12 @@ class ClaudeProcess:
 
     async def start(self, project_path: str, session_id: str = None):
         """
-        Run claude -p \
+        Run claude \
             --input-format stream-json \
             --output-format stream-json \
             --verbose
         as asyncio subprocess.
-        If session_id provided, add --resume option.
+        If session_id provided, add --resume --session-id options.
         working directory = project_path
         """
 
@@ -222,15 +219,18 @@ class ClaudeProcess:
         {"type":"user","message":{"role":"user","content":[{"type":"text","text":"..."}]}}
         """
 
+    async def send_permission_response(self, request_id: str, allowed: bool):
+        """Send permission response to stdin"""
+
     async def read_responses(self) -> AsyncIterator[dict]:
         """
         Read and parse stream-json lines from stdout.
         Yields each JSON object.
-        Message types: init, assistant, result, etc.
+        Message types: init, system, assistant, result, etc.
         """
 
     async def stop(self):
-        """Stop the process"""
+        """Terminate gracefully with 5-second timeout, force-kill if needed"""
 
     @property
     def is_alive(self) -> bool:
@@ -243,102 +243,90 @@ class ClaudeProcess:
 
 ### 3. SessionManager (`core/session_manager.py`)
 
-Manages the entire session pool.
+Manages the entire session pool with persistence.
 
 ```python
 class Session:
-    name: str               # "MyApp-session-1"
+    name: str               # "{project}-{YYMMDD-HHMMSS}"
     project_name: str       # "MyApp"
-    project_path: str       # "~/projects/myapp"
-    channel_id: str         # Messenger channel ID (Telegram: topic_id, etc.)
+    project_path: str       # "/Users/me/projects/myapp"
+    worktree_path: str      # "/Users/me/projects/myapp/.afk-worktrees/{name}"
+    channel_id: str         # Messenger channel ID (prefixed with "tg_")
     process: ClaudeProcess  # Subprocess instance
     claude_session_id: str  # Claude Code session ID (for resume)
     state: str              # "idle" | "running" | "waiting_permission" | "stopped"
-    trust_level: int        # 1=strict, 2=normal, 3=yolo
+    verbose: bool           # Show full tool input/output
+    created_at: float       # Unix timestamp
 
 class SessionManager:
     def __init__(self, messenger: MessengerPort):
         """Injected with MessengerPort for messenger-independent operation"""
 
     async def create_session(self, project_name, project_path) -> Session:
-        """messenger.create_session_channel() → create session + start Claude Code"""
+        """Create worktree + forum topic + Claude process"""
 
     async def stop_session(self, channel_id: str):
-        """Stop session"""
+        """Stop Claude process, remove worktree, delete branch, close channel"""
 
-    async def resume_session(self, channel_id: str):
-        """Restore session using saved session_id"""
+    async def complete_session(self, channel_id: str):
+        """Commit changes (AI message) → rebase onto main → merge → cleanup"""
 
-    def get_session_by_channel(self, channel_id: str) -> Session | None:
+    def get_session(self, channel_id: str) -> Session | None:
         """Look up session by channel ID"""
 
     def list_sessions(self) -> list[Session]:
         """List all active sessions"""
+
+    async def cleanup_orphan_worktrees(self, project_store):
+        """Detect and remove orphaned worktrees from crashed sessions"""
 ```
 
-### 4. PermissionBridge (`core/permission_bridge.py`)
+### 4. GitWorktree (`core/git_worktree.py`)
 
-Forwards Claude Code permission requests to users via MessengerPort.
-Integrates with TrustManager to determine auto-approval.
+Git operations for session isolation. All functions are async.
 
 ```python
-class PermissionBridge:
-    def __init__(self, messenger: MessengerPort, trust_manager: TrustManager):
-        """Injected with MessengerPort + TrustManager"""
+async def create_worktree(project_path, worktree_path, branch_name):
+    """Create a new worktree on an isolated branch"""
 
-    async def handle_permission_request(self, session: Session, tool_request: dict) -> str:
-        """
-        1. Check auto-approval with TrustManager
-        2. If auto-approved, return immediately
-        3. Otherwise, call messenger.send_permission_request()
-        4. Wait for user response (timeout=300s)
-        5. Auto-deny on timeout
-        Returns: "allow" | "deny" | "always_allow"
-        """
+async def remove_worktree(project_path, worktree_path, branch_name):
+    """Remove worktree and delete branch"""
+
+async def commit_worktree_changes(worktree_path, session_name):
+    """Stage all changes + commit with AI-generated message (Claude CLI -p)"""
+
+async def merge_branch_to_main(project_path, branch_name, worktree_path):
+    """Rebase session branch onto main, then fast-forward merge"""
+
+async def list_afk_worktrees(project_path):
+    """Find all afk/* worktrees for orphan detection"""
 ```
 
-### 5. TrustManager (`core/trust_manager.py`)
+### 5. Orchestrator (`core/orchestrator.py`)
 
-Auto-approval decisions based on trust level.
-
-```python
-class TrustManager:
-    # Dangerous patterns blocked at all levels
-    ALWAYS_ASK = ["rm -rf", "git push", "curl | sh", "sudo"]
-
-    def should_auto_approve(self, trust_level: int, tool_name: str, tool_args: str) -> bool:
-        """
-        Level 1 (Strict): deny all
-        Level 2 (Normal): auto-approve Read, Write
-        Level 3 (YOLO):   approve all except ALWAYS_ASK
-        """
-```
-
-### 6. CostTracker (`core/cost_tracker.py`)
-
-Cost tracking + budget limits + thrashing detection.
+Central message router and command dispatcher.
 
 ```python
-class CostTracker:
-    async def record(self, session: Session, cost_usd: float):
-        """Record cost"""
+class Orchestrator:
+    """Routes messages and commands to sessions"""
 
-    def get_session_cost(self, channel_id: str) -> float:
-        """Session cumulative cost"""
+    # Command handlers
+    async def _handle_project_command(channel_id, args)   # /project add|list|remove
+    async def _handle_new_command(channel_id, args)        # /new <project> [--verbose]
+    async def _handle_sessions_command(channel_id, args)   # /sessions
+    async def _handle_stop_command(channel_id, args)       # /stop
+    async def _handle_complete_command(channel_id, args)    # /complete
+    async def _handle_status_command(channel_id, args)      # /status
+    async def _handle_unknown_command(channel_id, text)     # help text
 
-    def get_daily_cost(self) -> float:
-        """Today's total cost"""
+    # Message handlers
+    async def _handle_text(channel_id, text)                # forward to session
+    async def _handle_voice(channel_id, file_id)            # transcribe → forward
+    async def _handle_permission_response(channel_id, request_id, choice)
 
-    def is_over_budget(self) -> bool:
-        """Whether budget is exceeded"""
-
-    def detect_thrashing(self, session: Session) -> bool:
-        """
-        Thrashing detection:
-        - Same file modified 3+ times
-        - Cost spike in short period
-        - Same error repeated
-        """
+    # Claude response processing
+    async def _handle_claude_message(session, msg)          # route by type
+    async def _handle_assistant_message(session, msg)       # parse/display
 ```
 
 ## Data Flow
@@ -347,20 +335,20 @@ class CostTracker:
 
 ```
 User text message
-  → TelegramAdapter → orchestrator.on_text_message(channel_id, text)
-  → SessionManager.get_session_by_channel(channel_id)
+  → TelegramAdapter → orchestrator._handle_text(channel_id, text)
+  → SessionManager.get_session(channel_id)
   → Session.process.send_message(text)
   → read_responses() loop:
       ├── assistant → messenger.send_message(channel_id, text, silent=True)
-      ├── tool_use → PermissionBridge (TrustManager check → auto-approve or button)
-      └── result → CostTracker.record() → messenger.send_message(cost summary)
+      ├── tool_use → messenger.send_permission_request(channel_id, tool, args, request_id)
+      └── result → messenger.send_message(result)
 ```
 
 ### Voice Prompt
 
 ```
 User voice message
-  → TelegramAdapter → orchestrator.on_voice_message(channel_id, file_id)
+  → TelegramAdapter → orchestrator._handle_voice(channel_id, file_id)
   → messenger.download_voice(file_id) → audio file
   → STTPort.transcribe(audio) → text
   → messenger.send_message(channel_id, "🎤 {text}", silent=True)
@@ -372,14 +360,11 @@ User voice message
 
 ```
 Permission request detected in read_responses()
-  → TrustManager.should_auto_approve() check
-  ├── Auto-approve → forward directly to Claude Code
-  └── Manual approval needed:
-      → Session.state = "waiting_permission"
-      → messenger.send_permission_request(channel_id, tool, args, options)
-      → Wait for user response (timeout=300s)
-      → Forward result to Claude Code stdin
-      → Session.state = "running"
+  → Session.state = "waiting_permission"
+  → messenger.send_permission_request(channel_id, tool, args, request_id)
+  → Wait for user button press (Allow/Deny)
+  → Forward result to Claude Code stdin
+  → Session.state = "running"
 ```
 
 ## Data Storage
@@ -402,14 +387,13 @@ For session recovery. Referenced on AFK daemon restart.
 ```json
 {
   "tg_12345": {
-    "name": "MyApp-session-1",
+    "name": "myapp-260218-143022",
     "project_name": "MyApp",
     "project_path": "/Users/me/projects/myapp",
+    "worktree_path": "/Users/me/projects/myapp/.afk-worktrees/myapp-260218-143022",
     "channel_id": "tg_12345",
     "claude_session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "state": "stopped",
-    "trust_level": 2,
-    "total_cost_usd": 1.23
+    "state": "stopped"
   }
 }
 ```
@@ -449,13 +433,13 @@ For session recovery. Referenced on AFK daemon restart.
 
 ```
 python-telegram-bot[ext]>=21.0    # Telegram bot (asyncio native)
-openai-whisper                     # Voice → text (local)
-ffmpeg-python                      # Audio format conversion
+aiohttp>=3.9                      # Web dashboard server
+python-dotenv>=1.0                # Environment variable loading
+openai>=1.0                       # Whisper API for voice transcription (optional)
 ```
 
 System requirements:
 - Claude Code CLI installed
-- ffmpeg installed (`brew install ffmpeg`)
 - Python 3.11+
 
 ## Claude Code Headless Mode Reference
@@ -463,7 +447,7 @@ System requirements:
 ### Starting a Session
 
 ```bash
-claude -p \
+claude \
   --input-format stream-json \
   --output-format stream-json \
   --verbose
@@ -479,13 +463,14 @@ claude -p \
 
 Each line is an independent JSON object:
 - **init**: Session initialization, includes session_id
+- **system**: System messages
 - **assistant**: Claude's text response or tool use request
 - **result**: Conversation complete, includes cost/stats
 
 ### Session Resume
 
 ```bash
-claude -p --resume <session_id> \
+claude --resume --session-id <session_id> \
   --input-format stream-json \
   --output-format stream-json
 ```
@@ -513,8 +498,8 @@ Native app adapter advantages:
 ```
 voice/
 ├── port.py                 # Abstract interface (unchanged)
-├── whisper_local.py        # MVP (local)
-├── whisper_api.py          # OpenAI Whisper API
+├── whisper_api.py          # OpenAI Whisper API (current)
+├── whisper_local.py        # Whisper local model
 └── deepgram.py             # Deepgram API
 ```
 
