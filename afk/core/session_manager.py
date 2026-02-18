@@ -6,6 +6,7 @@ import logging
 import shutil
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -52,7 +53,6 @@ class SessionManager:
     ) -> None:
         self._messenger = messenger
         self._sessions: dict[str, Session] = {}  # channel_id -> Session
-        self._session_counter: dict[str, int] = {}  # project_name -> count
         self._data_dir = data_dir
         self._on_claude_message: asyncio.Callable | None = None
 
@@ -71,10 +71,9 @@ class SessionManager:
                 "Git worktree isolation requires a git repo."
             )
 
-        # Assign session number
-        count = self._session_counter.get(project_name, 0) + 1
-        self._session_counter[project_name] = count
-        session_name = f"{project_name}-session-{count}"
+        # Assign timestamp-based session name (YYMMDD-HHMMSS)
+        ts = datetime.now(timezone.utc).strftime("%y%m%d-%H%M%S")
+        session_name = f"{project_name}-{ts}"
 
         # Compute worktree path and branch name
         worktree_root = Path(project_path) / ".afk-worktrees"
