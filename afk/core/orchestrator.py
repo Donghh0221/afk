@@ -137,14 +137,22 @@ class Orchestrator:
     async def _handle_new_command(
         self, channel_id: str, args: list[str]
     ) -> None:
-        """/new <project_name> — create a new session."""
+        """/new <project_name> [--verbose] — create a new session."""
         if not args:
             await self._messenger.send_message(
-                channel_id, "Usage: /new <project_name>"
+                channel_id, "Usage: /new <project_name> [--verbose]"
             )
             return
 
-        project_name = args[0]
+        verbose = "--verbose" in args
+        positional = [a for a in args if not a.startswith("--")]
+        if not positional:
+            await self._messenger.send_message(
+                channel_id, "Usage: /new <project_name> [--verbose]"
+            )
+            return
+
+        project_name = positional[0]
         project = self._ps.get(project_name)
         if not project:
             await self._messenger.send_message(
@@ -162,14 +170,16 @@ class Orchestrator:
             session = await self._sm.create_session(
                 project_name, project["path"]
             )
+            session.verbose = verbose
+            verbose_label = " (verbose)" if verbose else ""
             await self._messenger.send_message(
                 channel_id,
-                f"✅ Session created: {session.name}\n"
+                f"✅ Session created: {session.name}{verbose_label}\n"
                 f"Send messages in the topic to talk to Claude Code.",
             )
             await self._messenger.send_message(
                 session.channel_id,
-                f"🚀 Session started: {session.name}\n"
+                f"🚀 Session started: {session.name}{verbose_label}\n"
                 f"📁 Project: {project_name} ({project['path']})\n"
                 f"🌿 Branch: afk/{session.name}\n"
                 f"📂 Worktree: {session.worktree_path}\n\n"
@@ -349,15 +359,17 @@ class Orchestrator:
         if tool_lines:
             tool_body = "\n".join(tool_lines)
             self._ms.append(session.channel_id, "tool", tool_body)
-            await self._messenger.send_message(
-                session.channel_id, tool_body, silent=True
-            )
+            if session.verbose:
+                await self._messenger.send_message(
+                    session.channel_id, tool_body, silent=True
+                )
         if result_lines:
             result_body = "\n".join(result_lines)
             self._ms.append(session.channel_id, "tool", result_body)
-            await self._messenger.send_message(
-                session.channel_id, result_body, silent=True
-            )
+            if session.verbose:
+                await self._messenger.send_message(
+                    session.channel_id, result_body, silent=True
+                )
 
     @staticmethod
     def _summarize_tool_args(tool_input: dict | str) -> str:

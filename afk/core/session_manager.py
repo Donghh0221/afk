@@ -34,6 +34,7 @@ class Session:
     process: ClaudeProcess
     claude_session_id: str | None = None
     state: str = "idle"  # idle | running | waiting_permission | stopped
+    verbose: bool = False
     created_at: float = field(default_factory=time.time)
     _response_task: asyncio.Task | None = field(default=None, repr=False)
 
