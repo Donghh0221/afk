@@ -13,11 +13,11 @@ from afk.core.claude_process import ClaudeProcess
 from afk.core.git_worktree import (
     commit_worktree_changes,
     create_worktree,
+    delete_branch,
     is_git_repo,
     list_afk_worktrees,
     merge_branch_to_main,
     remove_worktree,
-    remove_worktree_after_merge,
 )
 
 if TYPE_CHECKING:
@@ -172,10 +172,10 @@ class SessionManager:
         # 2. Commit any uncommitted changes in the worktree
         await commit_worktree_changes(session.worktree_path, session.name)
 
-        # 3. Merge branch into main
+        # 3. Merge branch into main (rebase in worktree, remove worktree, ff-merge)
         branch_name = f"afk/{session.name}"
         success, merge_output = await merge_branch_to_main(
-            session.project_path, branch_name
+            session.project_path, branch_name, session.worktree_path
         )
 
         if not success:
@@ -195,10 +195,8 @@ class SessionManager:
                 f"or use /stop to discard changes."
             )
 
-        # 4. Remove worktree and branch
-        await remove_worktree_after_merge(
-            session.project_path, session.worktree_path, branch_name
-        )
+        # 4. Delete the branch (worktree already removed by merge_branch_to_main)
+        await delete_branch(session.project_path, branch_name)
 
         # 5. Clean up session state
         self._save_sessions()

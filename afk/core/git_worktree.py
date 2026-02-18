@@ -67,27 +67,35 @@ async def commit_worktree_changes(
 async def merge_branch_to_main(
     project_path: str,
     branch_name: str,
+    worktree_path: str,
 ) -> tuple[bool, str]:
     """Rebase session branch onto main, then fast-forward merge.
+
+    The rebase runs inside the worktree (which has the branch checked out).
+    After a successful rebase the worktree is removed so that the branch
+    is no longer "in use", and then main is fast-forwarded.
 
     Returns (success, message). On conflict the rebase is aborted
     so both main and the session branch stay clean.
     """
-    # Abort any in-progress rebase/merge (defensive cleanup from prior crash)
-    await _run_git(["rebase", "--abort"], cwd=project_path)
-    await _run_git(["merge", "--abort"], cwd=project_path)
+    # Abort any in-progress rebase inside the worktree (defensive cleanup)
+    await _run_git(["rebase", "--abort"], cwd=worktree_path)
 
-    # Rebase session branch onto main so commits are linear
+    # Rebase onto main *inside* the worktree — avoids the
+    # "branch is already used by worktree" error.
     code, stdout, stderr = await _run_git(
-        ["rebase", "main", branch_name],
-        cwd=project_path,
+        ["rebase", "main"],
+        cwd=worktree_path,
     )
     if code != 0:
-        await _run_git(["rebase", "--abort"], cwd=project_path)
+        await _run_git(["rebase", "--abort"], cwd=worktree_path)
         return False, stderr or stdout
 
-    # Switch back to main (rebase leaves HEAD on the rebased branch)
-    await _run_git(["checkout", "main"], cwd=project_path)
+    # Remove the worktree so the branch is no longer locked
+    await remove_worktree_after_merge(project_path, worktree_path, None)
+
+    # Abort any in-progress merge on main (defensive cleanup)
+    await _run_git(["merge", "--abort"], cwd=project_path)
 
     # Fast-forward main to the rebased branch
     code, stdout, stderr = await _run_git(
@@ -102,11 +110,13 @@ async def merge_branch_to_main(
 async def remove_worktree_after_merge(
     project_path: str,
     worktree_path: str,
-    branch_name: str,
+    branch_name: str | None,
 ) -> None:
-    """Remove worktree and delete branch after a successful merge.
+    """Remove worktree and optionally delete the branch.
 
-    Uses 'branch -d' (lowercase) since the branch has been merged.
+    If *branch_name* is given, delete it with 'branch -d' (safe, since it
+    should already be merged).  Pass ``None`` to skip branch deletion
+    (e.g. when the worktree is removed before the merge).
     """
     code, _, stderr = await _run_git(
         ["worktree", "remove", "--force", worktree_path],
@@ -117,14 +127,25 @@ async def remove_worktree_after_merge(
             "git worktree remove failed for %s: %s", worktree_path, stderr
         )
 
+    if branch_name is not None:
+        code, _, stderr = await _run_git(
+            ["branch", "-d", branch_name],
+            cwd=project_path,
+        )
+        if code != 0:
+            logger.warning(
+                "git branch -d failed for %s: %s", branch_name, stderr
+            )
+
+
+async def delete_branch(project_path: str, branch_name: str) -> None:
+    """Delete a merged branch. Best-effort: errors are logged."""
     code, _, stderr = await _run_git(
         ["branch", "-d", branch_name],
         cwd=project_path,
     )
     if code != 0:
-        logger.warning(
-            "git branch -d failed for %s: %s", branch_name, stderr
-        )
+        logger.warning("git branch -d failed for %s: %s", branch_name, stderr)
 
 
 async def create_worktree(
