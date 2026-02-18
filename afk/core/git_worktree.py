@@ -26,6 +26,40 @@ async def is_git_repo(project_path: str) -> bool:
     return code == 0
 
 
+def _build_commit_message(name_status_output: str) -> str:
+    """Build a commit message from `git diff --cached --name-status` output.
+
+    Groups files by action (Add/Modify/Delete) and extracts the top-level
+    module or filename to produce a short summary line.
+    """
+    actions: dict[str, list[str]] = {"Add": [], "Update": [], "Delete": []}
+    prefix_map = {"A": "Add", "M": "Update", "D": "Delete"}
+
+    for line in name_status_output.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        status, filepath = parts[0][0], parts[1]  # first char of status
+        action = prefix_map.get(status, "Update")
+        # Use first meaningful path component as module name
+        segments = filepath.split("/")
+        if len(segments) >= 2:
+            name = segments[1] if segments[0] in ("afk", "src", "lib") else segments[0]
+        else:
+            name = segments[0]
+        # Remove extension for brevity
+        name = name.rsplit(".", 1)[0] if "." in name else name
+        if name not in actions[action]:
+            actions[action].append(name)
+
+    parts = []
+    for action, modules in actions.items():
+        if modules:
+            parts.append(f"{action} {', '.join(modules)}")
+
+    return "; ".join(parts) if parts else "Update files"
+
+
 async def commit_worktree_changes(
     worktree_path: str,
     session_name: str,
@@ -52,15 +86,22 @@ async def commit_worktree_changes(
         # No staged changes
         return False, "No changes to commit."
 
+    # Build a descriptive commit message from changed files
+    code, name_status, _ = await _run_git(
+        ["diff", "--cached", "--name-status"],
+        cwd=worktree_path,
+    )
+    commit_msg = _build_commit_message(name_status) if code == 0 else "Update files"
+
     # Commit
     code, stdout, stderr = await _run_git(
-        ["commit", "-m", f"Session {session_name} changes"],
+        ["commit", "-m", commit_msg],
         cwd=worktree_path,
     )
     if code != 0:
         return False, f"git commit failed: {stderr}"
 
-    logger.info("Committed worktree changes for session %s", session_name)
+    logger.info("Committed worktree changes for session %s: %s", session_name, commit_msg)
     return True, stdout
 
 
