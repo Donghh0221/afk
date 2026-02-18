@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from afk.core.session_manager import SessionManager, Session
@@ -9,6 +10,7 @@ from afk.storage.project_store import ProjectStore
 
 if TYPE_CHECKING:
     from afk.messenger.telegram.adapter import TelegramAdapter
+    from afk.voice.port import STTPort
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +24,18 @@ class Orchestrator:
         session_manager: SessionManager,
         project_store: ProjectStore,
         message_store: MessageStore | None = None,
+        stt: STTPort | None = None,
     ) -> None:
         self._messenger = messenger
         self._sm = session_manager
         self._ps = project_store
         self._ms = message_store or MessageStore()
+        self._stt = stt
 
         # Register messenger callbacks
         messenger.set_on_text(self._handle_text)
+        if stt is not None:
+            messenger.set_on_voice(self._handle_voice)
         messenger.set_on_command("project", self._handle_project_command)
         messenger.set_on_command("new", self._handle_new_command)
         messenger.set_on_command("sessions", self._handle_sessions_command)
@@ -77,6 +83,65 @@ class Orchestrator:
             self._ms.append(channel_id, "user", text)
             await self._messenger.edit_message(
                 channel_id, msg_id, "📝 Task started..."
+            )
+
+    async def _handle_voice(self, channel_id: str, file_id: str) -> None:
+        """Handle voice messages: download -> transcribe -> forward to session."""
+        if channel_id == "general":
+            return
+
+        session = self._sm.get_session(channel_id)
+        if not session:
+            return
+
+        if not session.process.is_alive:
+            await self._messenger.send_message(
+                channel_id, "Session has ended. Use /resume to restart."
+            )
+            return
+
+        if session.state == "waiting_permission":
+            await self._messenger.send_message(
+                channel_id,
+                "Waiting for permission approval. Please press the button above.",
+                silent=True,
+            )
+            return
+
+        msg_id = await self._messenger.send_message(
+            channel_id, "Transcribing voice message...", silent=True
+        )
+
+        try:
+            audio_path = await self._messenger.download_voice(file_id)
+            text = await self._stt.transcribe(audio_path)
+
+            try:
+                os.unlink(audio_path)
+            except OSError:
+                pass
+
+            if not text or not text.strip():
+                await self._messenger.edit_message(
+                    channel_id, msg_id, "Could not transcribe voice message."
+                )
+                return
+
+            await self._messenger.edit_message(
+                channel_id, msg_id, f"Voice: {text}"
+            )
+
+            ok = await self._sm.send_to_session(channel_id, text)
+            if ok:
+                self._ms.append(channel_id, "user", f"[voice] {text}")
+            else:
+                await self._messenger.send_message(
+                    channel_id, "Failed to forward message"
+                )
+        except Exception as e:
+            logger.exception("Voice transcription failed for channel %s", channel_id)
+            await self._messenger.edit_message(
+                channel_id, msg_id, f"Voice transcription failed: {e}"
             )
 
     async def _handle_project_command(

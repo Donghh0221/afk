@@ -57,6 +57,7 @@ class TelegramAdapter:
         self._on_text: Callable[[str, str], Awaitable[None]] | None = None
         self._on_command: dict[str, Callable[..., Awaitable[None]]] = {}
         self._on_unknown_command: Callable[[str, str], Awaitable[None]] | None = None
+        self._on_voice: Callable[[str, str], Awaitable[None]] | None = None
         self._on_permission_response: Callable[
             [str, str, str], Awaitable[None]
         ] | None = None  # (channel_id, request_id, choice)
@@ -72,6 +73,12 @@ class TelegramAdapter:
     ) -> None:
         """Register command callback."""
         self._on_command[command] = callback
+
+    def set_on_voice(
+        self, callback: Callable[[str, str], Awaitable[None]]
+    ) -> None:
+        """Voice message callback: (channel_id, file_id) -> None"""
+        self._on_voice = callback
 
     def set_on_unknown_command(
         self, callback: Callable[[str, str], Awaitable[None]]
@@ -201,6 +208,30 @@ class TelegramAdapter:
         if self._on_text:
             await self._on_text(channel_id, text)
 
+    async def _handle_voice(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Voice message handler."""
+        if not update.effective_message or not update.effective_message.voice:
+            return
+        if update.effective_message.from_user and update.effective_message.from_user.is_bot:
+            return
+        channel_id = self._get_channel_id(update)
+        file_id = update.effective_message.voice.file_id
+        if self._on_voice:
+            await self._on_voice(channel_id, file_id)
+
+    async def download_voice(self, file_id: str) -> str:
+        """Download voice message from Telegram. Returns: local file path."""
+        import tempfile
+
+        bot = self._app.bot
+        tg_file = await bot.get_file(file_id)
+        tmp = tempfile.NamedTemporaryFile(suffix=".ogg", delete=False)
+        tmp.close()
+        await tg_file.download_to_drive(tmp.name)
+        return tmp.name
+
     async def _handle_unknown_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -270,6 +301,11 @@ class TelegramAdapter:
                 filters.TEXT & ~filters.COMMAND,
                 self._handle_text,
             )
+        )
+
+        # Voice handler
+        self._app.add_handler(
+            MessageHandler(filters.VOICE, self._handle_voice)
         )
 
         # Unknown command handler (must be added after known commands)

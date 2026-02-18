@@ -13,6 +13,7 @@ class Config:
     telegram_group_id: int
     data_dir: Path = field(default_factory=lambda: Path(__file__).parent / "data")
     dashboard_port: int = 7777
+    openai_api_key: str = ""
 
     @classmethod
     def from_env(cls) -> Config:
@@ -27,4 +28,6 @@ class Config:
             telegram_bot_token=token,
             telegram_group_id=int(group_id),
             dashboard_port=int(os.environ.get("AFK_DASHBOARD_PORT", "7777")),
+            openai_api_key=os.environ.get("AFK_OPENAI_API_KEY", "")
+            or os.environ.get("OPENAI_API_KEY", ""),
         )

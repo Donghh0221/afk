@@ -40,6 +40,10 @@ class MessengerPort(Protocol):
         """Delete/close a session-dedicated channel."""
         ...
 
+    async def download_voice(self, file_id: str) -> str:
+        """Download a voice message file. Returns: local file path."""
+        ...
+
     async def start(self) -> None:
         """Start messenger connection (polling, etc.)."""
         ...

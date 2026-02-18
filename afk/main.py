@@ -12,6 +12,7 @@ from afk.messenger.telegram.adapter import TelegramAdapter
 from afk.core.session_manager import SessionManager
 from afk.core.orchestrator import Orchestrator
 from afk.storage.project_store import ProjectStore
+from afk.voice.whisper_api import WhisperAPISTT
 
 LOG_FILE = "/tmp/afk.log"
 
@@ -38,12 +39,21 @@ async def main() -> None:
     session_manager = SessionManager(messenger, config.data_dir)
     message_store = MessageStore()
 
+    # Initialize STT (optional — voice support requires OpenAI API key)
+    stt = None
+    if config.openai_api_key:
+        stt = WhisperAPISTT(api_key=config.openai_api_key)
+        logger.info("Voice support enabled (OpenAI Whisper API)")
+    else:
+        logger.info("Voice support disabled (no OPENAI_API_KEY)")
+
     # Clean up any orphan worktrees from previous crash
     await session_manager.cleanup_orphan_worktrees(project_store)
 
     # Orchestrator wires all callbacks
     _orchestrator = Orchestrator(
         messenger, session_manager, project_store, message_store,
+        stt=stt,
     )
 
     # Dashboard web server
