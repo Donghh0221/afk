@@ -101,20 +101,35 @@ class TelegramAdapter:
         return "general"
 
     async def send_message(
-        self, channel_id: str, text: str, *, silent: bool = False
+        self,
+        channel_id: str,
+        text: str,
+        *,
+        silent: bool = False,
+        link_url: str | None = None,
+        link_label: str | None = None,
     ) -> str:
-        """Send a message."""
+        """Send a message. Optionally attach an inline URL button."""
         bot = self._app.bot
         thread_id = int(channel_id) if channel_id != "general" else None
 
+        reply_markup = None
+        if link_url:
+            reply_markup = InlineKeyboardMarkup(
+                [[InlineKeyboardButton(link_label or "Open", url=link_url)]]
+            )
+
         chunks = _split_message(text)
         last_msg = None
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
+            # Attach button only to the last chunk
+            markup = reply_markup if (i == len(chunks) - 1) else None
             last_msg = await bot.send_message(
                 chat_id=self._group_id,
                 message_thread_id=thread_id,
                 text=chunk,
                 disable_notification=silent,
+                reply_markup=markup,
             )
         return str(last_msg.message_id) if last_msg else ""
 
@@ -184,9 +199,7 @@ class TelegramAdapter:
         # Telegram supergroup IDs start with -100; strip it for the deep-link.
         raw = str(self._group_id)
         internal_id = raw.removeprefix("-100")
-        # Use tg:// scheme — https://t.me/c/ links don't auto-open the
-        # Telegram app on iOS, whereas tg://privatepost does.
-        return f"tg://privatepost?channel={internal_id}&post={channel_id}"
+        return f"https://t.me/c/{internal_id}/{channel_id}"
 
     async def close_session_channel(self, channel_id: str) -> None:
         """Delete forum topic."""
