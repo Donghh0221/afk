@@ -76,4 +76,4 @@ afk/
 - Permission timeout: 300 seconds, auto-deny on expiry
 - Telegram messages over 4096 chars must be split
 - Silent notifications for log-like messages, normal notifications for permission requests/errors/completion
-- Detailed architecture spec: `arch.md`; product spec with phased roadmap: `project.md`
+- Detailed architecture spec: `ARCH.md`; product spec with phased roadmap: `PROJECT.md`
