@@ -36,6 +36,7 @@ class Orchestrator:
         messenger.set_on_command("stop", self._handle_stop_command)
         messenger.set_on_command("complete", self._handle_complete_command)
         messenger.set_on_command("status", self._handle_status_command)
+        messenger.set_on_unknown_command(self._handle_unknown_command)
         messenger.set_on_permission_response(self._handle_permission_response)
 
         # Register Claude response callback
@@ -280,6 +281,22 @@ class Orchestrator:
             f"Process: {alive}\n"
             f"Project: {session.project_name} ({session.project_path})\n"
             f"Worktree: {session.worktree_path}",
+        )
+
+    async def _handle_unknown_command(
+        self, channel_id: str, command_text: str
+    ) -> None:
+        """Show available commands when an unknown command is used."""
+        await self._messenger.send_message(
+            channel_id,
+            f"❓ Unknown command: {command_text}\n\n"
+            "Available commands:\n"
+            "/project add|list|remove — manage projects\n"
+            "/new <project> [--verbose] — create session\n"
+            "/sessions — list active sessions\n"
+            "/stop — stop current session\n"
+            "/complete — merge & cleanup session\n"
+            "/status — check session state",
         )
 
     async def _handle_permission_response(

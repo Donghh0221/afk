@@ -56,6 +56,7 @@ class TelegramAdapter:
         # Callback storage
         self._on_text: Callable[[str, str], Awaitable[None]] | None = None
         self._on_command: dict[str, Callable[..., Awaitable[None]]] = {}
+        self._on_unknown_command: Callable[[str, str], Awaitable[None]] | None = None
         self._on_permission_response: Callable[
             [str, str, str], Awaitable[None]
         ] | None = None  # (channel_id, request_id, choice)
@@ -71,6 +72,12 @@ class TelegramAdapter:
     ) -> None:
         """Register command callback."""
         self._on_command[command] = callback
+
+    def set_on_unknown_command(
+        self, callback: Callable[[str, str], Awaitable[None]]
+    ) -> None:
+        """Unknown command callback: (channel_id, command_text) -> None"""
+        self._on_unknown_command = callback
 
     def set_on_permission_response(
         self,
@@ -187,6 +194,17 @@ class TelegramAdapter:
         if self._on_text:
             await self._on_text(channel_id, text)
 
+    async def _handle_unknown_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Unknown command handler."""
+        if not update.effective_message or not update.effective_message.text:
+            return
+        channel_id = self._get_channel_id(update)
+        command_text = update.effective_message.text.split()[0]  # e.g. "/foo"
+        if self._on_unknown_command:
+            await self._on_unknown_command(channel_id, command_text)
+
     async def _handle_callback(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -245,6 +263,11 @@ class TelegramAdapter:
                 filters.TEXT & ~filters.COMMAND,
                 self._handle_text,
             )
+        )
+
+        # Unknown command handler (must be added after known commands)
+        self._app.add_handler(
+            MessageHandler(filters.COMMAND, self._handle_unknown_command)
         )
 
         # Inline button callback handler
