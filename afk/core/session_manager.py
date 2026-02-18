@@ -73,7 +73,7 @@ class SessionManager:
 
         # Assign timestamp-based session name (YYMMDD-HHMMSS)
         ts = datetime.now(timezone.utc).strftime("%y%m%d-%H%M%S")
-        session_name = f"{project_name}-{ts}"
+        session_name = f"{project_name.lower()}-{ts}"
 
         # Compute worktree path and branch name
         worktree_root = Path(project_path) / ".afk-worktrees"
