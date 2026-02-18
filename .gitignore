@@ -4,3 +4,4 @@ __pycache__/
 afk/data/*.json
 venv/
 .venv/
+.afk-worktrees/

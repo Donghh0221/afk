@@ -38,6 +38,9 @@ async def main() -> None:
     session_manager = SessionManager(messenger, config.data_dir)
     message_store = MessageStore()
 
+    # Clean up any orphan worktrees from previous crash
+    await session_manager.cleanup_orphan_worktrees(project_store)
+
     # Orchestrator wires all callbacks
     _orchestrator = Orchestrator(
         messenger, session_manager, project_store, message_store,

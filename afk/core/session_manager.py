@@ -3,15 +3,23 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from afk.core.claude_process import ClaudeProcess
+from afk.core.git_worktree import (
+    create_worktree,
+    is_git_repo,
+    list_afk_worktrees,
+    remove_worktree,
+)
 
 if TYPE_CHECKING:
     from afk.messenger.telegram.adapter import TelegramAdapter
+    from afk.storage.project_store import ProjectStore
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +28,8 @@ logger = logging.getLogger(__name__)
 class Session:
     name: str
     project_name: str
-    project_path: str
+    project_path: str  # main repo path (never changes)
+    worktree_path: str  # isolated worktree directory for this session
     channel_id: str
     process: ClaudeProcess
     claude_session_id: str | None = None
@@ -50,23 +59,49 @@ class SessionManager:
     async def create_session(
         self, project_name: str, project_path: str
     ) -> Session:
-        """Create new session: forum topic + Claude Code process."""
+        """Create new session: git worktree + forum topic + Claude Code process."""
+        # Validate git repository
+        if not await is_git_repo(project_path):
+            raise RuntimeError(
+                f"Project '{project_name}' at {project_path} is not a git repository. "
+                "Git worktree isolation requires a git repo."
+            )
+
         # Assign session number
         count = self._session_counter.get(project_name, 0) + 1
         self._session_counter[project_name] = count
         session_name = f"{project_name}-session-{count}"
 
-        # Create forum topic
+        # Compute worktree path and branch name
+        worktree_root = Path(project_path) / ".afk-worktrees"
+        worktree_path = str(worktree_root / session_name)
+        branch_name = f"afk/{session_name}"
+
+        # Clean up stale worktree if path already exists
+        if Path(worktree_path).exists():
+            logger.warning(
+                "Worktree path already exists, attempting cleanup: %s",
+                worktree_path,
+            )
+            await remove_worktree(project_path, worktree_path, branch_name)
+            if Path(worktree_path).exists():
+                shutil.rmtree(worktree_path, ignore_errors=True)
+
+        # Create git worktree (raises RuntimeError on failure)
+        await create_worktree(project_path, worktree_path, branch_name)
+
+        # Create forum topic (only after git succeeds — no orphan topics)
         channel_id = await self._messenger.create_session_channel(session_name)
 
-        # Start Claude Code process
+        # Start Claude Code process in the worktree directory
         process = ClaudeProcess()
-        await process.start(project_path)
+        await process.start(worktree_path)
 
         session = Session(
             name=session_name,
             project_name=project_name,
             project_path=project_path,
+            worktree_path=worktree_path,
             channel_id=channel_id,
             process=process,
         )
@@ -78,11 +113,14 @@ class SessionManager:
             self._read_loop(session)
         )
 
-        logger.info("Created session: %s (channel=%s)", session_name, channel_id)
+        logger.info(
+            "Created session: %s (channel=%s, worktree=%s)",
+            session_name, channel_id, worktree_path,
+        )
         return session
 
     async def stop_session(self, channel_id: str) -> bool:
-        """Stop a session."""
+        """Stop a session and clean up its git worktree."""
         session = self._sessions.get(channel_id)
         if not session:
             return False
@@ -90,9 +128,17 @@ class SessionManager:
         session.state = "stopped"
         if session._response_task:
             session._response_task.cancel()
+
+        # Stop Claude process first (releases file handles on worktree)
         await session.process.stop()
-        # Save session ID (for resume later)
         session.claude_session_id = session.process.session_id
+
+        # Remove git worktree and branch (best-effort)
+        branch_name = f"afk/{session.name}"
+        await remove_worktree(
+            session.project_path, session.worktree_path, branch_name
+        )
+
         self._save_sessions()
         del self._sessions[channel_id]
         # Delete the forum topic
@@ -170,6 +216,28 @@ class SessionManager:
                         "Failed to delete topic for %s", session.name
                     )
 
+    async def cleanup_orphan_worktrees(
+        self, project_store: ProjectStore
+    ) -> None:
+        """Remove afk/ worktrees left behind by a previous crash."""
+        for project_name, info in project_store.list_all().items():
+            project_path = info["path"]
+            try:
+                orphans = await list_afk_worktrees(project_path)
+            except Exception:
+                logger.exception(
+                    "Failed to list worktrees for %s", project_name
+                )
+                continue
+
+            for wt in orphans:
+                logger.warning(
+                    "Orphan worktree detected: %s (branch=%s) — removing",
+                    wt["path"],
+                    wt["branch"],
+                )
+                await remove_worktree(project_path, wt["path"], wt["branch"])
+
     def _save_sessions(self) -> None:
         """Save session data for recovery."""
         data = {}
@@ -178,6 +246,7 @@ class SessionManager:
                 "name": s.name,
                 "project_name": s.project_name,
                 "project_path": s.project_path,
+                "worktree_path": s.worktree_path,
                 "channel_id": s.channel_id,
                 "claude_session_id": s.process.session_id,
                 "state": s.state,

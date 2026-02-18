@@ -170,7 +170,9 @@ class Orchestrator:
             await self._messenger.send_message(
                 session.channel_id,
                 f"🚀 Session started: {session.name}\n"
-                f"📁 Project: {project_name} ({project['path']})\n\n"
+                f"📁 Project: {project_name} ({project['path']})\n"
+                f"🌿 Branch: afk/{session.name}\n"
+                f"📂 Worktree: {session.worktree_path}\n\n"
                 f"Messages will be forwarded to Claude Code.",
             )
         except Exception as e:
@@ -235,7 +237,8 @@ class Orchestrator:
             f"📊 Session: {session.name}\n"
             f"State: {session.state}\n"
             f"Process: {alive}\n"
-            f"Project: {session.project_name} ({session.project_path})",
+            f"Project: {session.project_name} ({session.project_path})\n"
+            f"Worktree: {session.worktree_path}",
         )
 
     async def _handle_permission_response(
