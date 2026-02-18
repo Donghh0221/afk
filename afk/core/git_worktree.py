@@ -26,24 +26,75 @@ async def is_git_repo(project_path: str) -> bool:
     return code == 0
 
 
+async def commit_worktree_changes(
+    worktree_path: str,
+    session_name: str,
+) -> tuple[bool, str]:
+    """Stage and commit all changes in a worktree.
+
+    Returns (had_changes, message).
+    If there are no changes, returns (False, ...).
+    """
+    # Stage all changes (new, modified, deleted)
+    code, stdout, stderr = await _run_git(
+        ["add", "-A"],
+        cwd=worktree_path,
+    )
+    if code != 0:
+        return False, f"git add failed: {stderr}"
+
+    # Check if there's anything to commit
+    code, stdout, stderr = await _run_git(
+        ["diff", "--cached", "--quiet"],
+        cwd=worktree_path,
+    )
+    if code == 0:
+        # No staged changes
+        return False, "No changes to commit."
+
+    # Commit
+    code, stdout, stderr = await _run_git(
+        ["commit", "-m", f"Session {session_name} changes"],
+        cwd=worktree_path,
+    )
+    if code != 0:
+        return False, f"git commit failed: {stderr}"
+
+    logger.info("Committed worktree changes for session %s", session_name)
+    return True, stdout
+
+
 async def merge_branch_to_main(
     project_path: str,
     branch_name: str,
 ) -> tuple[bool, str]:
-    """Merge branch into main in the main repo.
+    """Rebase session branch onto main, then fast-forward merge.
 
-    Returns (success, message). On conflict the merge is aborted
-    so main stays clean.
+    Returns (success, message). On conflict the rebase is aborted
+    so both main and the session branch stay clean.
     """
-    # Abort any in-progress merge (defensive cleanup from prior crash)
+    # Abort any in-progress rebase/merge (defensive cleanup from prior crash)
+    await _run_git(["rebase", "--abort"], cwd=project_path)
     await _run_git(["merge", "--abort"], cwd=project_path)
 
+    # Rebase session branch onto main so commits are linear
     code, stdout, stderr = await _run_git(
-        ["merge", branch_name, "--no-edit"],
+        ["rebase", "main", branch_name],
         cwd=project_path,
     )
     if code != 0:
-        await _run_git(["merge", "--abort"], cwd=project_path)
+        await _run_git(["rebase", "--abort"], cwd=project_path)
+        return False, stderr or stdout
+
+    # Switch back to main (rebase leaves HEAD on the rebased branch)
+    await _run_git(["checkout", "main"], cwd=project_path)
+
+    # Fast-forward main to the rebased branch
+    code, stdout, stderr = await _run_git(
+        ["merge", "--ff-only", branch_name],
+        cwd=project_path,
+    )
+    if code != 0:
         return False, stderr or stdout
     return True, stdout
 

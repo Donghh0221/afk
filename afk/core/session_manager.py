@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from afk.core.claude_process import ClaudeProcess
 from afk.core.git_worktree import (
+    commit_worktree_changes,
     create_worktree,
     is_git_repo,
     list_afk_worktrees,
@@ -168,7 +169,10 @@ class SessionManager:
         await session.process.stop()
         session.claude_session_id = session.process.session_id
 
-        # 2. Merge branch into main
+        # 2. Commit any uncommitted changes in the worktree
+        await commit_worktree_changes(session.worktree_path, session.name)
+
+        # 3. Merge branch into main
         branch_name = f"afk/{session.name}"
         success, merge_output = await merge_branch_to_main(
             session.project_path, branch_name
@@ -191,16 +195,16 @@ class SessionManager:
                 f"or use /stop to discard changes."
             )
 
-        # 3. Remove worktree and branch
+        # 4. Remove worktree and branch
         await remove_worktree_after_merge(
             session.project_path, session.worktree_path, branch_name
         )
 
-        # 4. Clean up session state
+        # 5. Clean up session state
         self._save_sessions()
         del self._sessions[channel_id]
 
-        # 5. Delete the forum topic
+        # 6. Delete the forum topic
         try:
             await self._messenger.close_session_channel(channel_id)
         except Exception:
