@@ -1,4 +1,4 @@
-"""Dev-server detection and cloudflared tunnel management."""
+"""Dev-server detection and cloudflared tunnel management capability."""
 from __future__ import annotations
 
 import asyncio
@@ -264,3 +264,54 @@ class TunnelProcess:
         self._cloudflared = None
         self._dev_server = None
         self._public_url = None
+
+
+# ---------------------------------------------------------------------------
+# Tunnel capability — session-level tunnel manager
+# ---------------------------------------------------------------------------
+
+class TunnelCapability:
+    """Manages tunnels as a side-car to sessions.
+
+    Tracks one TunnelProcess per session (keyed by channel_id).
+    """
+
+    def __init__(self) -> None:
+        self._tunnels: dict[str, TunnelProcess] = {}
+
+    async def start_tunnel(self, channel_id: str, worktree_path: str) -> str:
+        """Detect dev server and start tunnel. Returns public URL.
+
+        Raises RuntimeError on detection/startup failure.
+        """
+        config = detect_dev_server(worktree_path)
+        if not config:
+            raise RuntimeError(
+                "Could not detect dev server.\n"
+                'Ensure the worktree has a package.json with a "dev" script.'
+            )
+
+        tunnel = TunnelProcess()
+        url = await tunnel.start(worktree_path, config)
+        self._tunnels[channel_id] = tunnel
+        return url
+
+    async def stop_tunnel(self, channel_id: str) -> bool:
+        """Stop tunnel for a session. Returns True if a tunnel was stopped."""
+        tunnel = self._tunnels.pop(channel_id, None)
+        if not tunnel:
+            return False
+        await tunnel.stop()
+        return True
+
+    def get_tunnel(self, channel_id: str) -> TunnelProcess | None:
+        """Get active tunnel for a session, or None."""
+        tunnel = self._tunnels.get(channel_id)
+        if tunnel and not tunnel.is_alive:
+            del self._tunnels[channel_id]
+            return None
+        return tunnel
+
+    async def cleanup_session(self, channel_id: str) -> None:
+        """Called when session stops/completes — cleanup tunnel if any."""
+        await self.stop_tunnel(channel_id)

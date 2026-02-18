@@ -10,8 +10,8 @@ from typing import AsyncIterator
 logger = logging.getLogger(__name__)
 
 
-class ClaudeProcess:
-    """Subprocess wrapper managing a single Claude Code session."""
+class ClaudeCodeAgent:
+    """AgentPort implementation wrapping the Claude Code CLI (stream-json protocol)."""
 
     def __init__(self) -> None:
         self._process: asyncio.subprocess.Process | None = None
@@ -28,7 +28,7 @@ class ClaudeProcess:
 
     async def start(
         self,
-        project_path: str,
+        working_dir: str,
         session_id: str | None = None,
     ) -> None:
         """Start Claude Code in headless mode."""
@@ -48,7 +48,7 @@ class ClaudeProcess:
         if session_id:
             cmd.extend(["--resume", "--session-id", session_id])
 
-        logger.info("Starting Claude Code: %s (cwd=%s)", " ".join(cmd), project_path)
+        logger.info("Starting Claude Code: %s (cwd=%s)", " ".join(cmd), working_dir)
 
         # Remove CLAUDECODE env var to bypass nested execution block
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
@@ -58,7 +58,7 @@ class ClaudeProcess:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=project_path,
+            cwd=working_dir,
             env=env,
         )
         self._alive = True

@@ -19,7 +19,7 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from afk.config import Config
+from afk.adapters.telegram.config import TelegramConfig
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +48,10 @@ def _split_message(text: str) -> list[str]:
 class TelegramAdapter:
     """MessengerPort implementation based on Telegram forum topics."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: TelegramConfig) -> None:
         self._config = config
         self._app: Application | None = None
-        self._group_id = config.telegram_group_id
+        self._group_id = config.group_id
 
         # Callback storage
         self._on_text: Callable[[str, str], Awaitable[None]] | None = None
@@ -302,7 +302,7 @@ class TelegramAdapter:
 
     async def start(self) -> None:
         """Start Telegram bot (polling)."""
-        builder = Application.builder().token(self._config.telegram_bot_token)
+        builder = Application.builder().token(self._config.bot_token)
         self._app = builder.build()
 
         # Register command handlers

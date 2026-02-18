@@ -19,7 +19,8 @@ For these people, the terminal is a bottleneck. AFK removes that bottleneck.
 - **Input is voice, output is text**: Optimized for human I/O bandwidth
 - **Messenger is the control plane**: Starting with Telegram (MVP), control from anywhere
 - **Session = isolated workspace**: Session isolation, concurrent multitasking
-- **Messenger-agnostic architecture**: MessengerPort abstraction allows swapping Telegram/Slack/native app
+- **Agent-agnostic architecture**: AgentPort abstraction allows swapping Claude Code/Codex/any agent
+- **Control-plane-agnostic architecture**: ControlPlanePort abstraction allows swapping Telegram/Slack/CLI/native app
 - **STT-agnostic architecture**: STTPort abstraction allows swapping Whisper local/API/Deepgram
 - **Always-on server**: Runs as a Mac mini daemon 24/7, accessible from any device
 
@@ -29,8 +30,8 @@ For these people, the terminal is a bottleneck. AFK removes that bottleneck.
 📱 Phone (on the go)     💻 MacBook (home/cafe)      🖥️ Mac mini (always ON)
 │                        │                           │
 │ Telegram voice         │ Telegram text              │ AFK Server (daemon)
-│ → commands, approvals  │ + terminal client (future)  │ Claude Code ×N
-│                        │ → detailed review, polish   │ Session state preserved
+│ → commands, approvals  │ + terminal client (future)  │ Agent ×N (Claude Code)
+│                        │                           │ Session state preserved
 │                        │                           │
 └────────────────────────┴───────────────────────────┘
          Seamlessly connected via Telegram multi-device
@@ -52,7 +53,7 @@ Phone voice: "Allow"
 → Agent continues working
 
 [Arriving at cafe, open MacBook]
-MacBook Telegram: Check progress, verify results via tunnel
+MacBook Telegram: Check progress, /tunnel to verify results in browser
 
 [Back home]
 MacBook terminal: afk attach → hands-on finishing touches (future)
@@ -62,15 +63,16 @@ MacBook terminal: afk attach → hands-on finishing touches (future)
 
 - Claude Code headless mode (`--input-format stream-json --output-format stream-json`)
 - Python + asyncio
-- Telegram supergroup forum topics (MVP messenger)
-- Whisper local (MVP STT, Mac M-chip base model)
+- Telegram supergroup forum topics (MVP control plane)
+- OpenAI Whisper API (MVP STT)
+- cloudflared (quick tunnel for remote verification)
 - launchd daemon (Mac mini always-on)
 
 ---
 
 ## Phase 1 — MVP
 
-Minimum functionality to talk to Claude Code without a terminal.
+Minimum functionality to talk to an AI coding agent without a terminal.
 
 ### 1.1 Project Registration
 
@@ -87,25 +89,26 @@ Register local folder paths with a name. Reference by name when creating session
 
 ### 1.2 Session Management
 
-Session = one Claude Code subprocess + one Telegram forum topic.
+Session = one agent subprocess + one Telegram forum topic + one git worktree.
 
 | Command | Location | Description |
 |---|---|---|
-| `/new <project_name>` | General | Create new topic + session |
+| `/new <project_name> [-v]` | General | Create new topic + session |
 | `/sessions` | General | List all active sessions |
-| `/stop` | Session topic | Stop session (kill process, preserve topic) |
-| `/resume` | Session topic | Restore dead session (`--resume <session_id>`) |
+| `/stop` | Session topic | Stop session (kill process, remove worktree) |
+| `/complete` | Session topic | Commit, merge into main, cleanup |
 | `/status` | Session topic | Query status (idle / running / waiting_permission) |
 
-- Topic name on `/new`: `{project_name}-session-{number}`
+- Topic name on `/new`: `{project_name}-{YYMMDD-HHMMSS}`
 - Multiple sessions per project supported
+- `-v` / `--verbose` shows full tool input/output
 
 ### 1.3 Prompt Delivery & Response
 
-- **Text message** in session topic → forwarded as prompt to Claude Code
-- **Voice message** in session topic → converted via STTPort (Whisper) → forwarded to Claude Code
+- **Text message** in session topic → forwarded as prompt to agent
+- **Voice message** in session topic → converted via STTPort (Whisper API) → forwarded to agent
   - Converted text shown for confirmation, then auto-forwarded
-- Claude Code responses streamed in real-time (stream-json parsing)
+- Agent responses published as events, rendered to Telegram via EventRenderer
 - Messages over 4096 chars auto-split
 - Cost info displayed on task completion
 
@@ -120,19 +123,18 @@ Session = one Claude Code subprocess + one Telegram forum topic.
 
 ### 1.4 Permission Handling
 
-When Claude Code requests tool permission, displayed as inline buttons:
+When the agent requests tool permission, displayed as inline buttons:
 
 ```
 ⚠️ Tool execution request
 🔧 Bash: npm init -y && npm install express
 
-[✅ Allow] [❌ Deny] [🔓 Always Allow]
+[✅ Allow] [❌ Deny]
 ```
 
 - Tool name + argument summary displayed
-- Approval/denial forwarded to Claude Code
-- 5-minute timeout, auto-deny on expiry
-- Voice response ("allow"/"deny") also supported
+- Approval/denial forwarded to agent
+- Voice response ("allow"/"deny") also supported (future)
 
 ---
 
@@ -147,7 +149,7 @@ The core problem: AFK lets you **command** agents remotely, but you can't **veri
 Each session runs in an isolated worktree. A session may or may not run a dev server. When it does, the port belongs to that session.
 
 - **1 tunnel per session** — each `/tunnel` is scoped to the session topic where it's called
-- Tunnel lifecycle is tied to the session: `/stop` or `/complete` kills the tunnel too
+- Tunnel lifecycle is tied to the session: `/stop` or `/complete` kills the tunnel too (via cleanup callbacks)
 - Multiple sessions can each have their own tunnel simultaneously (different ports, different URLs)
 - If a session doesn't run a server, no tunnel is needed
 
@@ -166,34 +168,26 @@ Not all projects are web apps. The verification strategy depends on what the age
 
 **Incremental approach**: Start with Tunnel (covers web + Expo), then Screenshot (covers iOS/Android simulators), then Build Artifact transfer (APK/IPA). Each layer adds coverage for more project types.
 
-### 2.1 Tunneling (`/tunnel`)
+### 2.1 Tunneling (`/tunnel`) ✅ Implemented
 
-Expose a localhost port to a public HTTPS URL via cloudflared quick tunnel.
+Expose a localhost dev server to a public HTTPS URL via cloudflared quick tunnel. Auto-detects dev server framework and port.
 
 ```
-/tunnel 3000
-→ Starts cloudflared tunnel → https://xxx.trycloudflare.com
-→ URL sent to session topic
+/tunnel
+→ Detects dev server (Next.js, Vite, etc.), starts cloudflared tunnel
+→ https://xxx.trycloudflare.com sent to session topic
 → Open on phone, verify immediately
 
-/tunnel
-→ (no port specified) Auto-scan common ports (3000, 5173, 8080, 4200, 8000, 19000)
-→ Tunnel the first open port found
-
-/tunnel off
+/tunnel stop
 → Kill tunnel process for this session
 ```
 
 Implementation:
-- cloudflared subprocess per session, managed alongside ClaudeProcess
-- Parse URL from cloudflared stderr (`INF |  https://xxx.trycloudflare.com`)
-- No account/config needed (quick tunnel mode)
+- `TunnelCapability` in `capabilities/tunnel/tunnel.py`
+- Auto-detects framework from package.json/config files
+- Starts dev server if not running, then tunnels via cloudflared
+- Cleanup callback registered with SessionManager — tunnel torn down on `/stop` or `/complete`
 - System requirement: `brew install cloudflared`
-
-Edge cases:
-- Port not yet open when `/tunnel` is called → retry with backoff, or watch for port
-- Session uses multiple ports (e.g. frontend 3000 + backend 8000) → `/tunnel 3000`, `/tunnel 8000` both allowed per session
-- Claude restarts the dev server on a different port → user re-runs `/tunnel`
 
 ### 2.2 Screenshot (`/screenshot`)
 
@@ -203,9 +197,6 @@ Capture what's running locally and send as an image via Telegram.
 /screenshot
 → Captures localhost:{tunneled_port} via headless browser
 → Sends image to session topic
-
-/screenshot http://localhost:8080/dashboard
-→ Captures specific URL
 
 /screenshot simulator
 → Captures iOS Simulator or Android Emulator screen
@@ -325,9 +316,9 @@ Multi-agent coordination.
 📱 Supergroup (Forum mode ON)
 │
 ├── 📌 General              ← Project/session management
-├── 💬 MyApp-session-1      ← Claude Code session
-├── 💬 MyApp-session-2      ← Same project, second session
-└── 💬 Backend-session-1    ← Different project session
+├── 💬 myapp-260218-143022  ← Agent session (isolated worktree + branch)
+├── 💬 myapp-260218-152010  ← Same project, second session
+└── 💬 backend-260218-160505 ← Different project session
 ```
 
 ### Initial Setup (one-time)

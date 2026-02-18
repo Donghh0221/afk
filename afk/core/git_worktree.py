@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import shutil
 from pathlib import Path
+from typing import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -28,55 +27,15 @@ async def is_git_repo(project_path: str) -> bool:
     return code == 0
 
 
-async def _generate_commit_message(worktree_path: str) -> str:
-    """Use Claude Code CLI to generate a commit message from staged diff.
-
-    Falls back to a generic message on any failure.
-    """
-    claude_path = shutil.which("claude")
-    if not claude_path:
-        return "Update files"
-
-    # Get the staged diff (truncate to avoid overwhelming the prompt)
-    code, diff_output, _ = await _run_git(
-        ["diff", "--cached", "--stat"],
-        cwd=worktree_path,
-    )
-    if code != 0 or not diff_output:
-        return "Update files"
-
-    prompt = (
-        "Based on the following git diff stat, write a concise commit message "
-        "(single line, max 72 chars, imperative mood, no quotes). "
-        "Just output the message, nothing else.\n\n"
-        f"{diff_output}"
-    )
-
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            claude_path, "-p", "--no-session-persistence", prompt,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=worktree_path,
-            env=env,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-        msg = stdout.decode().strip()
-        if msg and proc.returncode == 0:
-            # Take first line only, enforce max length
-            first_line = msg.splitlines()[0].strip().strip('"\'')
-            return first_line[:72] if first_line else "Update files"
-    except (asyncio.TimeoutError, Exception) as e:
-        logger.warning("Claude commit message generation failed: %s", e)
-
-    return "Update files"
+# Type alias for injectable commit message generator
+CommitMessageFn = Callable[[str], Awaitable[str]]
 
 
 async def commit_worktree_changes(
     worktree_path: str,
     session_name: str,
+    *,
+    commit_message_fn: CommitMessageFn | None = None,
 ) -> tuple[bool, str]:
     """Stage and commit all changes in a worktree.
 
@@ -100,8 +59,11 @@ async def commit_worktree_changes(
         # No staged changes
         return False, "No changes to commit."
 
-    # Generate a descriptive commit message via Claude Code
-    commit_msg = await _generate_commit_message(worktree_path)
+    # Generate a descriptive commit message (via injected function or fallback)
+    if commit_message_fn:
+        commit_msg = await commit_message_fn(worktree_path)
+    else:
+        commit_msg = "Update files"
 
     # Commit
     code, stdout, stderr = await _run_git(

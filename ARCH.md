@@ -2,8 +2,11 @@
 
 ## Design Principles
 
-- **Messenger-agnostic**: Core logic depends only on the MessengerPort interface. Swappable between Telegram/Slack/native app.
-- **STT-agnostic**: Speech recognition abstracted via STTPort. Swappable between Whisper API/local/Deepgram.
+- **Agent-agnostic**: Core logic depends only on the `AgentPort` interface. Swappable between Claude Code/Codex/any agent runtime.
+- **Control-plane-agnostic**: Core logic depends only on the `ControlPlanePort` interface. Swappable between Telegram/Slack/CLI/native app.
+- **STT-agnostic**: Speech recognition abstracted via `STTPort`. Swappable between Whisper API/local/Deepgram.
+- **Event-driven**: All agent output flows as typed events through an `EventBus`. Control planes subscribe and render.
+- **Single entry point**: All control planes call the `Commands` API — never session manager or agent directly.
 - **Always-on daemon**: Runs 24/7 as a launchd daemon on Mac mini. Accessible from any device.
 
 ## System Architecture
@@ -11,323 +14,348 @@
 ```
 📱 Phone         💻 MacBook        🖥️ Mac mini (AFK Server)
 │                │                 │
-│ Telegram       │ Telegram        │ ┌──────────────────────────┐
-│                │ + CLI (future)  │ │     AFK Daemon           │
-│                │                 │ │                          │
-└────────────────┴────────────────┤ │  ┌────────────────────┐  │
-                                  │ │  │  MessengerPort     │  │
-        Telegram Bot API          │ │  │  ┌──────────────┐  │  │
-        ──────────────────────────┤ │  │  │ Telegram     │  │  │
-                                  │ │  │  │ Adapter      │  │  │
-                                  │ │  │  └──────────────┘  │  │
-                                  │ │  └────────┬───────────┘  │
-                                  │ │           │              │
-                                  │ │  ┌────────▼───────────┐  │
-                                  │ │  │    Orchestrator     │  │
-                                  │ │  │                     │  │
-                                  │ │  │  ┌──────────────┐   │  │
-                                  │ │  │  │ STTPort      │   │  │
-                                  │ │  │  │ (Whisper)    │   │  │
-                                  │ │  │  └──────────────┘   │  │
-                                  │ │  └────────┬────────────┘  │
-                                  │ │           │              │
-                                  │ │  ┌────────▼───────────┐  │
-                                  │ │  │  Session Manager    │  │
-                                  │ │  │                     │  │
-                                  │ │  │  ┌──────┐ ┌──────┐ │  │
-                                  │ │  │  │Ses A │ │Ses B │ │  │
-                                  │ │  │  └──┬───┘ └──┬───┘ │  │
-                                  │ │  └─────┼────────┼─────┘  │
-                                  │ │        │        │        │
-                                  │ └────────┼────────┼────────┘
-                                  │          │        │
-                                  │   ┌──────▼──┐ ┌──▼───────┐
-                                  │   │Claude   │ │Claude    │
-                                  │   │Code CLI │ │Code CLI  │
-                                  │   └─────────┘ └──────────┘
+│ Telegram       │ Telegram        │ ┌──────────────────────────────────┐
+│                │ + CLI (future)  │ │          AFK Daemon              │
+│                │                 │ │                                  │
+└────────────────┴────────────────┤ │  ┌──────────────────────────┐    │
+                                  │ │  │  ControlPlanePort        │    │
+       Telegram Bot API           │ │  │  ┌────────────────────┐  │    │
+       ───────────────────────────┤ │  │  │ TelegramAdapter    │  │    │
+                                  │ │  │  └────────────────────┘  │    │
+                                  │ │  └──────────┬───────────────┘    │
+                                  │ │             │                    │
+                                  │ │  ┌──────────▼───────────────┐    │
+                                  │ │  │   Orchestrator            │    │
+                                  │ │  │   (messenger → Commands)  │    │
+                                  │ │  └──────────┬───────────────┘    │
+                                  │ │             │                    │
+                                  │ │  ┌──────────▼───────────────┐    │
+                                  │ │  │   Commands API            │    │
+                                  │ │  │   (single entry point)    │    │
+                                  │ │  │                           │    │
+                                  │ │  │  ┌─────────┐ ┌─────────┐ │    │
+                                  │ │  │  │ STTPort │ │ Tunnel  │ │    │
+                                  │ │  │  │(Whisper)│ │Capabilty│ │    │
+                                  │ │  │  └─────────┘ └─────────┘ │    │
+                                  │ │  └──────────┬───────────────┘    │
+                                  │ │             │                    │
+                                  │ │  ┌──────────▼───────────────┐    │
+                                  │ │  │  Session Manager          │    │
+                                  │ │  │  ┌────────┐ ┌────────┐   │    │
+                                  │ │  │  │ Ses A  │ │ Ses B  │   │    │
+                                  │ │  │  └───┬────┘ └───┬────┘   │    │
+                                  │ │  └──────┼──────────┼────────┘    │
+                                  │ │         │          │             │
+                                  │ │  ┌──────▼──┐ ┌────▼─────┐       │
+                                  │ │  │AgentPort│ │AgentPort │       │
+                                  │ │  │(Claude  │ │(Claude   │       │
+                                  │ │  │ Code)   │ │ Code)    │       │
+                                  │ │  └─────────┘ └──────────┘       │
+                                  │ │                                  │
+                                  │ │  EventBus ──► EventRenderer      │
+                                  │ │              (→ Telegram msgs)   │
+                                  │ └──────────────────────────────────┘
 ```
+
+## 3-Layer Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 1: Core (AFK Kernel)                                 │
+│  commands.py, events.py, session_manager.py, git_worktree.py│
+│  Never imports Telegram, Claude, cloudflared                 │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 2: Ports (Abstract Interfaces)                       │
+│  AgentPort, ControlPlanePort, STTPort                       │
+│  Protocol definitions only — no implementations              │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 3: Adapters + Capabilities                           │
+│  ClaudeCodeAgent, TelegramAdapter, WhisperAPISTT            │
+│  TunnelCapability, EventRenderer                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Boundary rules:**
+1. `core/` never imports from `adapters/`, `messenger/`, `capabilities/`
+2. `ports/` contains only Protocol definitions (no implementations)
+3. `adapters/` contains all external integrations
+4. `capabilities/` contains pluggable session-level features
+5. `core.commands` is the single entry point for all control planes
+6. All agent output flows as typed events through EventBus
 
 ## Module Structure
 
 ```
 afk/
-├── main.py                     # Entry point, component wiring, daemon startup/shutdown
-├── config.py                   # Environment settings (tokens, group ID, dashboard port, OpenAI key)
+├── main.py                          # Entry point, component wiring, daemon startup/shutdown
 │
-├── messenger/                  # Messenger abstraction layer
-│   ├── port.py                 # MessengerPort (abstract interface)
-│   └── telegram/               # Telegram adapter (MVP)
-│       └── adapter.py          # TelegramAdapter (forum topics, permission buttons, deep-links)
+├── ports/                           # Abstract interfaces (Protocol definitions only)
+│   ├── agent.py                     # AgentPort protocol
+│   ├── control_plane.py             # ControlPlanePort protocol
+│   └── stt.py                       # STTPort protocol
 │
-├── core/                       # Messenger-independent business logic
-│   ├── orchestrator.py         # Message routing, command handling, Claude response processing
-│   ├── session_manager.py      # Session lifecycle (create, stop, complete, restore, persist)
-│   ├── claude_process.py       # Claude Code subprocess wrapper (stream-json protocol)
-│   └── git_worktree.py         # Git worktree/branch operations, AI commit messages
+├── core/                            # Business logic (agent/messenger-independent)
+│   ├── commands.py                  # Commands API — single entry point for all control planes
+│   ├── events.py                    # EventBus (asyncio pub/sub) + typed event dataclasses
+│   ├── orchestrator.py              # Thin glue: wires messenger callbacks to Commands API
+│   ├── session_manager.py           # Session lifecycle (create, stop, complete, persist)
+│   ├── git_worktree.py              # Git worktree/branch operations
+│   └── config.py                    # CoreConfig (data_dir, dashboard_port)
 │
-├── voice/                      # Voice abstraction layer
-│   ├── port.py                 # STTPort (abstract interface)
-│   └── whisper_api.py          # OpenAI Whisper API implementation
+├── adapters/                        # Concrete implementations of ports
+│   ├── claude_code/
+│   │   ├── agent.py                 # ClaudeCodeAgent (implements AgentPort)
+│   │   └── commit_helper.py         # AI commit message generation via Claude CLI
+│   ├── telegram/
+│   │   ├── config.py                # TelegramConfig (bot_token, group_id)
+│   │   └── renderer.py              # EventRenderer: EventBus events → Telegram messages
+│   └── whisper/
+│       ├── config.py                # WhisperConfig (api_key, model)
+│       └── stt.py                   # WhisperAPISTT (implements STTPort)
 │
-├── dashboard/                  # Web dashboard
-│   ├── server.py               # aiohttp web server + API routes
-│   ├── message_store.py        # Per-session in-memory message history
-│   └── index.html              # Single-page dashboard (HTML+CSS+JS)
+├── capabilities/                    # Pluggable session-level features
+│   └── tunnel/
+│       └── tunnel.py                # TunnelCapability (dev server + cloudflared tunneling)
+│
+├── messenger/                       # Telegram bot adapter (implements ControlPlanePort)
+│   ├── port.py                      # MessengerPort protocol (legacy alias)
+│   └── telegram/
+│       └── adapter.py               # TelegramAdapter (forum topics, permission buttons, deep-links)
+│
+├── dashboard/                       # Web dashboard
+│   ├── server.py                    # aiohttp web server + API routes
+│   ├── message_store.py             # Per-session in-memory message history
+│   └── index.html                   # Single-page dashboard (HTML+CSS+JS)
 │
 ├── storage/
-│   └── project_store.py        # Project registration CRUD (JSON file)
+│   └── project_store.py             # Project registration CRUD (JSON file)
 │
-└── data/                       # Runtime data (gitignored)
+└── data/                            # Runtime data (gitignored)
     ├── projects.json
     └── sessions.json
 ```
 
 ## Core Component Details
 
-### 0. MessengerPort (`messenger/port.py`)
+### 0. Ports (`ports/`)
 
-Abstract interface that all messenger adapters must implement. Core logic depends only on this interface.
+Abstract interfaces that define boundaries between layers. All Protocol definitions, no implementations.
+
+#### AgentPort (`ports/agent.py`)
+
+Abstract interface for agent runtimes. Any AI coding agent can implement this protocol.
 
 ```python
-class MessengerPort(Protocol):
-    """Messenger abstract interface"""
-
-    async def send_message(
-        self, channel_id: str, text: str, silent: bool = False
-    ) -> str:
-        """
-        Send a message.
-        silent=True: no notification (for log-like messages)
-        silent=False: with notification (for permission requests and important messages)
-        Returns: message ID
-        """
-        ...
-
-    async def edit_message(
-        self, channel_id: str, message_id: str, text: str
-    ) -> None:
-        """Edit an existing message."""
-        ...
-
-    async def send_permission_request(
-        self, channel_id: str, tool_name: str, tool_args: str,
-        request_id: str
-    ) -> str:
-        """Display permission approval request with Allow/Deny buttons."""
-        ...
-
-    async def create_session_channel(self, name: str) -> str:
-        """
-        Create a session-dedicated channel.
-        Telegram: forum topic, Slack: thread, native app: chat room
-        Returns: channel_id
-        """
-        ...
-
-    async def get_channel_link(self, channel_id: str) -> str:
-        """Return a deep-link URL for the channel."""
-        ...
-
-    async def close_session_channel(self, channel_id: str) -> None:
-        """Delete/close a session channel."""
-        ...
-
-    async def download_voice(self, file_id: str) -> str:
-        """Download voice message. Returns: local file path"""
-        ...
-
-    async def start(self) -> None:
-        """Start messenger connection"""
-        ...
-
-    async def stop(self) -> None:
-        """Stop messenger connection"""
-        ...
+@runtime_checkable
+class AgentPort(Protocol):
+    @property
+    def session_id(self) -> str | None: ...
+    @property
+    def is_alive(self) -> bool: ...
+    async def start(self, working_dir: str, session_id: str | None = None) -> None: ...
+    async def send_message(self, text: str) -> None: ...
+    async def send_permission_response(self, request_id: str, allowed: bool) -> None: ...
+    async def read_responses(self) -> AsyncIterator[dict]: ...
+    async def stop(self) -> None: ...
 ```
 
-### 0.1 TelegramAdapter (`messenger/telegram/adapter.py`)
+#### ControlPlanePort (`ports/control_plane.py`)
 
-Telegram forum topic-based implementation.
+Abstract interface for control plane integrations (Telegram, CLI, Web, etc.).
 
 ```python
-class TelegramAdapter(MessengerPort):
-    """
-    Mapping:
-      channel_id → forum topic message_thread_id (prefixed with "tg_")
-      send_message(silent=True) → disable_notification=True
-      send_permission_request → InlineKeyboardMarkup + callback_query
-      create_session_channel → create_forum_topic()
-      get_channel_link → tg://privatepost deep-link
-      close_session_channel → delete_forum_topic()
-      download_voice → bot.get_file() + download to temp
-    """
+class ControlPlanePort(Protocol):
+    async def send_message(self, channel_id: str, text: str, *, silent: bool = False) -> str: ...
+    async def edit_message(self, channel_id: str, message_id: str, text: str) -> None: ...
+    async def send_permission_request(self, channel_id: str, tool_name: str, tool_args: str, request_id: str) -> None: ...
+    async def create_session_channel(self, name: str) -> str: ...
+    def get_channel_link(self, channel_id: str) -> str | None: ...
+    async def close_session_channel(self, channel_id: str) -> None: ...
+    async def download_voice(self, file_id: str) -> str: ...
+    async def start(self) -> None: ...
+    async def stop(self) -> None: ...
+```
+
+#### STTPort (`ports/stt.py`)
+
+Speech-to-text abstract interface. STT engine swappable independently from control plane.
+
+```python
+class STTPort(Protocol):
+    async def transcribe(self, audio_path: str) -> str: ...
+```
+
+### 1. EventBus + Events (`core/events.py`)
+
+Asyncio-based typed pub/sub. Publishers call `publish(event)`, subscribers iterate via `iter_events(EventType)`.
+
+```python
+class EventBus:
+    def subscribe(self, event_type: type[T]) -> asyncio.Queue[T]: ...
+    def unsubscribe(self, event_type: type[T], queue: asyncio.Queue) -> None: ...
+    def publish(self, event: object) -> None: ...
+    async def iter_events(self, event_type: type[T]) -> AsyncIterator[T]: ...
+```
+
+Event types:
+- `AgentSystemEvent(channel_id, agent_session_id)` — agent session ready
+- `AgentAssistantEvent(channel_id, content_blocks, session_name, verbose)` — agent output (text, tool use, tool result)
+- `AgentResultEvent(channel_id, cost_usd, duration_ms)` — task completed
+- `AgentStoppedEvent(channel_id, session_name)` — agent process stopped unexpectedly
+- `SessionCreatedEvent(channel_id, session_name, project_name, ...)` — new session created
+
+### 2. Commands API (`core/commands.py`)
+
+Single entry point for all control planes. Returns plain dataclasses, never messenger-specific objects.
+
+```python
+class Commands:
+    def __init__(self, session_manager, project_store, message_store, stt=None, tunnel=None): ...
+
+    # Project commands
+    def cmd_add_project(self, name: str, path: str) -> tuple[bool, str]: ...
+    def cmd_list_projects(self) -> dict[str, dict]: ...
+    def cmd_remove_project(self, name: str) -> tuple[bool, str]: ...
+    def cmd_get_project(self, name: str) -> dict | None: ...
+
+    # Session commands
+    async def cmd_new_session(self, project_name: str, verbose: bool = False) -> Session: ...
+    async def cmd_send_message(self, channel_id: str, text: str) -> bool: ...
+    async def cmd_send_voice(self, channel_id: str, audio_path: str) -> tuple[bool, str]: ...
+    def cmd_get_session(self, channel_id: str) -> Session | None: ...
+    def cmd_list_sessions(self) -> list[SessionInfo]: ...
+    async def cmd_stop_session(self, channel_id: str) -> bool: ...
+    async def cmd_complete_session(self, channel_id: str) -> tuple[bool, str]: ...
+    def cmd_get_status(self, channel_id: str) -> SessionStatus | None: ...
+    async def cmd_permission_response(self, channel_id: str, request_id: str, allowed: bool) -> bool: ...
+
+    # Tunnel commands
+    async def cmd_start_tunnel(self, channel_id: str) -> str: ...
+    async def cmd_stop_tunnel(self, channel_id: str) -> bool: ...
+    def cmd_get_tunnel_url(self, channel_id: str) -> str | None: ...
+```
+
+### 3. Session Manager (`core/session_manager.py`)
+
+Manages the session pool. Each session = one agent subprocess + one control plane channel + one git worktree.
+
+```python
+@dataclass
+class Session:
+    name: str               # "{project}-{YYMMDD-HHMMSS}"
+    project_name: str       # "MyApp"
+    project_path: str       # "/Users/me/projects/myapp"
+    worktree_path: str      # "/Users/me/projects/myapp/.afk-worktrees/{name}"
+    channel_id: str         # Control plane channel ID
+    agent: AgentPort        # Agent runtime instance
+    agent_session_id: str   # Agent session ID (for resume)
+    state: str              # "idle" | "running" | "waiting_permission" | "stopped"
+    verbose: bool           # Show full tool input/output
+    created_at: float       # Unix timestamp
+
+class SessionManager:
+    def __init__(self, messenger, data_dir, event_bus=None, agent_factory=None, commit_message_fn=None): ...
+
+    def add_cleanup_callback(self, callback: SessionCleanupFn) -> None: ...
+    async def create_session(self, project_name, project_path) -> Session: ...
+    async def stop_session(self, channel_id: str) -> bool: ...
+    async def complete_session(self, channel_id: str) -> tuple[bool, str]: ...
+    def get_session(self, channel_id: str) -> Session | None: ...
+    def list_sessions(self) -> list[Session]: ...
+    async def cleanup_orphan_worktrees(self, project_store): ...
+```
+
+The `_read_loop` publishes typed events to the `EventBus` instead of calling callbacks directly. Cleanup callbacks (e.g., tunnel teardown) are registered via `add_cleanup_callback()`.
+
+### 4. Orchestrator (`core/orchestrator.py`)
+
+Thin glue layer: registers messenger callbacks and delegates to the Commands API.
+
+```python
+class Orchestrator:
+    def __init__(self, messenger: ControlPlanePort, commands: Commands): ...
+
+    # Registers callbacks on messenger for:
+    # text, voice, /project, /new, /sessions, /stop, /complete, /status, /tunnel
+    # Each callback delegates to self._cmd.cmd_*() methods
+```
+
+### 5. GitWorktree (`core/git_worktree.py`)
+
+Git operations for session isolation. All functions are async. No Claude CLI dependency — commit message generation is injected via `commit_message_fn`.
+
+```python
+CommitMessageFn = Callable[[str], Awaitable[str]]  # worktree_path → message
+
+async def create_worktree(project_path, worktree_path, branch_name): ...
+async def remove_worktree(project_path, worktree_path, branch_name): ...
+async def commit_worktree_changes(worktree_path, session_name, commit_message_fn=None): ...
+async def merge_branch_to_main(project_path, branch_name, worktree_path): ...
+async def list_afk_worktrees(project_path): ...
+```
+
+### 6. Adapters
+
+#### ClaudeCodeAgent (`adapters/claude_code/agent.py`)
+
+Implements `AgentPort`. Wraps Claude Code CLI subprocess using stream-json protocol.
+
+```python
+class ClaudeCodeAgent:
+    async def start(self, working_dir: str, session_id: str = None): ...
+    async def send_message(self, text: str): ...
+    async def send_permission_response(self, request_id: str, allowed: bool): ...
+    async def read_responses(self) -> AsyncIterator[dict]: ...
+    async def stop(self): ...
+```
+
+#### TelegramAdapter (`messenger/telegram/adapter.py`)
+
+Implements `ControlPlanePort`. Uses Telegram forum topics for session isolation.
+
+```python
+class TelegramAdapter:
+    def __init__(self, config: TelegramConfig): ...
+    # Implements all ControlPlanePort methods
+    # Registers text/voice/command callbacks via set_on_* methods
 ```
 
 Notification strategy:
 - `silent=True` → `disable_notification=True` (log-like: streaming responses, status changes)
 - `silent=False` → normal notification (permission requests, errors, task completion)
 
-Message handling:
-- Messages over 4096 chars are split at newline boundaries
-- Callback handlers for text, voice, commands, and permission button presses
-- Deep-links use `tg://privatepost` scheme for reliable iOS app opening
+#### EventRenderer (`adapters/telegram/renderer.py`)
 
-### 1. STTPort (`voice/port.py`)
-
-Speech recognition abstraction. STT engine swappable independently from messenger.
+Subscribes to EventBus events and renders them as Telegram messages.
 
 ```python
-class STTPort(Protocol):
-    """Voice-to-text abstract interface"""
-
-    async def transcribe(self, audio_path: str) -> str:
-        """Audio file → text. Format conversion handled internally."""
-        ...
-
-class WhisperAPISTT(STTPort):
-    """OpenAI Whisper API implementation. Supports ogg/opus directly (no ffmpeg needed)."""
-
-    def __init__(self, api_key: str):
-        """Initialize OpenAI client"""
-
-    async def transcribe(self, audio_path: str) -> str:
-        """Upload audio to Whisper API → text"""
+class EventRenderer:
+    def __init__(self, event_bus, messenger, message_store): ...
+    def start(self) -> None:  # starts background tasks
+    def stop(self) -> None:   # cancels background tasks
 ```
 
-### 2. ClaudeProcess (`core/claude_process.py`)
+Handles: `AgentSystemEvent`, `AgentAssistantEvent`, `AgentResultEvent`, `AgentStoppedEvent`
 
-Wrapper class managing Claude Code subprocess.
+#### WhisperAPISTT (`adapters/whisper/stt.py`)
+
+Implements `STTPort`. Uses OpenAI Whisper API. Supports ogg/opus directly (no ffmpeg needed).
+
+### 7. Capabilities
+
+#### TunnelCapability (`capabilities/tunnel/tunnel.py`)
+
+Pluggable session-level feature. Manages dev server detection and cloudflared tunnel per session.
 
 ```python
-class ClaudeProcess:
-    """Manages a single Claude Code session"""
-
-    async def start(self, project_path: str, session_id: str = None):
-        """
-        Run claude \
-            --input-format stream-json \
-            --output-format stream-json \
-            --verbose
-        as asyncio subprocess.
-        If session_id provided, add --resume --session-id options.
-        working directory = project_path
-        """
-
-    async def send_message(self, text: str):
-        """
-        Send user message to stdin in stream-json format:
-        {"type":"user","message":{"role":"user","content":[{"type":"text","text":"..."}]}}
-        """
-
-    async def send_permission_response(self, request_id: str, allowed: bool):
-        """Send permission response to stdin"""
-
-    async def read_responses(self) -> AsyncIterator[dict]:
-        """
-        Read and parse stream-json lines from stdout.
-        Yields each JSON object.
-        Message types: init, system, assistant, result, etc.
-        """
-
-    async def stop(self):
-        """Terminate gracefully with 5-second timeout, force-kill if needed"""
-
-    @property
-    def is_alive(self) -> bool:
-        """Whether the process is alive"""
-
-    @property
-    def session_id(self) -> str:
-        """Session ID extracted from init message (for resume)"""
+class TunnelCapability:
+    async def start_tunnel(self, channel_id: str, worktree_path: str) -> str: ...
+    async def stop_tunnel(self, channel_id: str) -> bool: ...
+    def get_tunnel(self, channel_id: str) -> TunnelProcess | None: ...
+    async def cleanup_session(self, channel_id: str) -> None: ...
 ```
 
-### 3. SessionManager (`core/session_manager.py`)
-
-Manages the entire session pool with persistence.
-
-```python
-class Session:
-    name: str               # "{project}-{YYMMDD-HHMMSS}"
-    project_name: str       # "MyApp"
-    project_path: str       # "/Users/me/projects/myapp"
-    worktree_path: str      # "/Users/me/projects/myapp/.afk-worktrees/{name}"
-    channel_id: str         # Messenger channel ID (prefixed with "tg_")
-    process: ClaudeProcess  # Subprocess instance
-    claude_session_id: str  # Claude Code session ID (for resume)
-    state: str              # "idle" | "running" | "waiting_permission" | "stopped"
-    verbose: bool           # Show full tool input/output
-    created_at: float       # Unix timestamp
-
-class SessionManager:
-    def __init__(self, messenger: MessengerPort):
-        """Injected with MessengerPort for messenger-independent operation"""
-
-    async def create_session(self, project_name, project_path) -> Session:
-        """Create worktree + forum topic + Claude process"""
-
-    async def stop_session(self, channel_id: str):
-        """Stop Claude process, remove worktree, delete branch, close channel"""
-
-    async def complete_session(self, channel_id: str):
-        """Commit changes (AI message) → rebase onto main → merge → cleanup"""
-
-    def get_session(self, channel_id: str) -> Session | None:
-        """Look up session by channel ID"""
-
-    def list_sessions(self) -> list[Session]:
-        """List all active sessions"""
-
-    async def cleanup_orphan_worktrees(self, project_store):
-        """Detect and remove orphaned worktrees from crashed sessions"""
-```
-
-### 4. GitWorktree (`core/git_worktree.py`)
-
-Git operations for session isolation. All functions are async.
-
-```python
-async def create_worktree(project_path, worktree_path, branch_name):
-    """Create a new worktree on an isolated branch"""
-
-async def remove_worktree(project_path, worktree_path, branch_name):
-    """Remove worktree and delete branch"""
-
-async def commit_worktree_changes(worktree_path, session_name):
-    """Stage all changes + commit with AI-generated message (Claude CLI -p)"""
-
-async def merge_branch_to_main(project_path, branch_name, worktree_path):
-    """Rebase session branch onto main, then fast-forward merge"""
-
-async def list_afk_worktrees(project_path):
-    """Find all afk/* worktrees for orphan detection"""
-```
-
-### 5. Orchestrator (`core/orchestrator.py`)
-
-Central message router and command dispatcher.
-
-```python
-class Orchestrator:
-    """Routes messages and commands to sessions"""
-
-    # Command handlers
-    async def _handle_project_command(channel_id, args)   # /project add|list|remove
-    async def _handle_new_command(channel_id, args)        # /new <project> [-v|--verbose]
-    async def _handle_sessions_command(channel_id, args)   # /sessions
-    async def _handle_stop_command(channel_id, args)       # /stop
-    async def _handle_complete_command(channel_id, args)    # /complete
-    async def _handle_status_command(channel_id, args)      # /status
-    async def _handle_unknown_command(channel_id, text)     # help text
-
-    # Message handlers
-    async def _handle_text(channel_id, text)                # forward to session
-    async def _handle_voice(channel_id, file_id)            # transcribe → forward
-    async def _handle_permission_response(channel_id, request_id, choice)
-
-    # Claude response processing
-    async def _handle_claude_message(session, msg)          # route by type
-    async def _handle_assistant_message(session, msg)       # parse/display
-```
+Registered as a cleanup callback with SessionManager — tunnels are automatically torn down when sessions stop or complete.
 
 ## Data Flow
 
@@ -335,36 +363,82 @@ class Orchestrator:
 
 ```
 User text message
-  → TelegramAdapter → orchestrator._handle_text(channel_id, text)
-  → SessionManager.get_session(channel_id)
-  → Session.process.send_message(text)
-  → read_responses() loop:
-      ├── assistant → messenger.send_message(channel_id, text, silent=True)
-      ├── tool_use → messenger.send_permission_request(channel_id, tool, args, request_id)
-      └── result → messenger.send_message(result)
+  → TelegramAdapter → Orchestrator._handle_text(channel_id, text)
+  → Commands.cmd_send_message(channel_id, text)
+  → SessionManager.send_to_session(channel_id, text)
+  → Session.agent.send_message(text)
+  → agent read_responses() → SessionManager._publish_agent_event()
+  → EventBus.publish(AgentAssistantEvent | AgentResultEvent)
+  → EventRenderer → messenger.send_message(channel_id, ...)
 ```
 
 ### Voice Prompt
 
 ```
 User voice message
-  → TelegramAdapter → orchestrator._handle_voice(channel_id, file_id)
+  → TelegramAdapter → Orchestrator._handle_voice(channel_id, file_id)
   → messenger.download_voice(file_id) → audio file
-  → STTPort.transcribe(audio) → text
-  → messenger.send_message(channel_id, "🎤 {text}", silent=True)
-  → Session.process.send_message(text)
-  → (same as text from here)
+  → Commands.cmd_send_voice(channel_id, audio_path)
+  → STTPort.transcribe(audio_path) → text
+  → SessionManager.send_to_session(channel_id, text)
+  → (same event flow as text from here)
 ```
 
 ### Permission Handling
 
 ```
-Permission request detected in read_responses()
-  → Session.state = "waiting_permission"
-  → messenger.send_permission_request(channel_id, tool, args, request_id)
-  → Wait for user button press (Allow/Deny)
-  → Forward result to Claude Code stdin
-  → Session.state = "running"
+Permission request detected in agent read_responses()
+  → EventBus.publish(AgentAssistantEvent with tool_use block)
+  → EventRenderer → messenger.send_permission_request(...)
+  → User presses Allow/Deny button
+  → Orchestrator._handle_permission_response(channel_id, request_id, choice)
+  → Commands.cmd_permission_response(...)
+  → SessionManager.send_permission_response(...)
+  → Session.agent.send_permission_response(request_id, allowed)
+```
+
+### Session Complete
+
+```
+/complete command
+  → Orchestrator → Commands.cmd_complete_session(channel_id)
+  → SessionManager.complete_session():
+      1. Run cleanup callbacks (stops tunnel, etc.)
+      2. Stop agent process
+      3. commit_worktree_changes(commit_message_fn=generate_commit_message)
+      4. merge_branch_to_main (rebase + ff-merge)
+      5. delete_branch
+      6. close_session_channel
+```
+
+## Wiring (`main.py`)
+
+```python
+# Core infrastructure
+event_bus = EventBus()
+messenger = TelegramAdapter(telegram_config)
+
+# Session manager publishes events via EventBus
+session_manager = SessionManager(
+    messenger, data_dir,
+    event_bus=event_bus,
+    agent_factory=ClaudeCodeAgent,
+    commit_message_fn=generate_commit_message,
+)
+
+# Capability cleanup registered with session manager
+tunnel_capability = TunnelCapability()
+session_manager.add_cleanup_callback(tunnel_capability.cleanup_session)
+
+# Commands API — single entry point
+commands = Commands(session_manager, project_store, message_store, stt=stt, tunnel=tunnel_capability)
+
+# EventRenderer subscribes to EventBus, renders to messenger
+renderer = EventRenderer(event_bus, messenger, message_store)
+renderer.start()
+
+# Orchestrator wires messenger callbacks to Commands
+orchestrator = Orchestrator(messenger, commands)
 ```
 
 ## Data Storage
@@ -386,48 +460,17 @@ For session recovery. Referenced on AFK daemon restart.
 
 ```json
 {
-  "tg_12345": {
+  "12345": {
     "name": "myapp-260218-143022",
     "project_name": "MyApp",
     "project_path": "/Users/me/projects/myapp",
     "worktree_path": "/Users/me/projects/myapp/.afk-worktrees/myapp-260218-143022",
-    "channel_id": "tg_12345",
-    "claude_session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "channel_id": "12345",
+    "agent_session_id": "550e8400-e29b-41d4-a716-446655440000",
     "state": "stopped"
   }
 }
 ```
-
-## Mac mini Daemon
-
-### launchd Configuration
-
-```xml
-<!-- ~/Library/LaunchAgents/com.afk.daemon.plist -->
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.afk.daemon</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/python3</string>
-        <string>/path/to/afk/main.py</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/afk.out.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/afk.err.log</string>
-</dict>
-</plist>
-```
-
-- Auto-start on boot
-- Auto-restart on crash (`KeepAlive`)
-- Restore sessions from sessions.json on restart (`--resume`)
 
 ## Dependencies
 
@@ -441,6 +484,7 @@ openai>=1.0                       # Whisper API for voice transcription (optiona
 System requirements:
 - Claude Code CLI installed
 - Python 3.11+
+- cloudflared (optional, for `/tunnel`)
 
 ## Claude Code Headless Mode Reference
 
@@ -477,38 +521,49 @@ claude --resume --session-id <session_id> \
 
 ## Future Extension Points
 
-### Adding Messenger Adapters
+### Adding Agent Runtimes
+
+Implement `AgentPort` from `ports/agent.py`:
 
 ```
-messenger/
-├── port.py                 # Abstract interface (unchanged)
-├── telegram/adapter.py     # MVP
-├── slack/adapter.py        # Slack thread-based
-├── discord/adapter.py      # Discord thread-based
-└── native/adapter.py       # WebSocket native app (full notification control)
+adapters/
+├── claude_code/agent.py     # Claude Code CLI (current)
+├── codex/agent.py           # OpenAI Codex CLI
+├── aider/agent.py           # Aider
+└── custom/agent.py          # Custom agent wrapper
 ```
 
-Native app adapter advantages:
-- Full notification control (log: silent, permission request: push, error: urgent)
-- Custom UI (diff viewer, file browser, terminal view)
-- Offline queuing
+### Adding Control Planes
+
+Implement `ControlPlanePort` from `ports/control_plane.py`:
+
+```
+adapters/
+├── telegram/                # Telegram forum topics (current)
+├── slack/adapter.py         # Slack thread-based
+├── discord/adapter.py       # Discord thread-based
+├── cli/adapter.py           # Terminal client
+└── web/adapter.py           # WebSocket native app
+```
 
 ### Adding STT Adapters
 
+Implement `STTPort` from `ports/stt.py`:
+
 ```
-voice/
-├── port.py                 # Abstract interface (unchanged)
-├── whisper_api.py          # OpenAI Whisper API (current)
-├── whisper_local.py        # Whisper local model
-└── deepgram.py             # Deepgram API
+adapters/
+├── whisper/stt.py           # OpenAI Whisper API (current)
+├── whisper_local/stt.py     # Whisper local model
+└── deepgram/stt.py          # Deepgram API
 ```
 
-### Other
+### Adding Capabilities
 
-- **Tunneling**: cloudflared integration for remote access to local apps
-- **Screenshots**: Playwright headless for app preview capture
-- **Terminal client**: `afk attach` — direct session connection from MacBook
-- **Log streaming**: Child process stdout/stderr forwarding
-- **Git monitoring**: watchdog for .git change detection
-- **Test automation**: Auto-run pytest/jest on code changes
-- **Multi-agent**: Inter-session message broker
+Register cleanup callbacks with SessionManager:
+
+```
+capabilities/
+├── tunnel/tunnel.py         # Dev server tunneling (current)
+├── screenshot/screenshot.py # App preview capture
+└── test_runner/runner.py    # Auto-run tests on changes
+```

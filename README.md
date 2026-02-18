@@ -1,6 +1,6 @@
 # AFK — Code while AFK
 
-A remote control plane for Claude Code. Issue commands via Telegram (voice or text) from any device, while your Mac mini runs coding sessions 24/7.
+A remote control plane for AI coding agents. Issue commands via Telegram (voice or text) from any device, while your Mac mini runs coding sessions 24/7.
 
 ## Why
 
@@ -8,10 +8,11 @@ Terminals are a bottleneck. You sit at a desk, type prompts, wait for responses,
 
 AFK breaks that loop:
 
-- **Work from anywhere.** Send a voice message from your phone while commuting. Claude Code runs on your Mac mini back home.
-- **Run multiple sessions.** Each Telegram forum topic is an isolated Claude Code session. Start one for frontend, another for backend, check in when you want.
+- **Work from anywhere.** Send a voice message from your phone while commuting. The agent runs on your Mac mini back home.
+- **Run multiple sessions.** Each Telegram forum topic is an isolated agent session. Start one for frontend, another for backend, check in when you want.
 - **Stay in control without being present.** Permission requests arrive as push notifications with approve/deny buttons. No terminal window required.
 - **See what's happening.** A built-in web dashboard shows live session activity, message history, and daemon logs — all at `localhost:7777`.
+- **Verify remotely.** Start a dev server tunnel with `/tunnel` and preview your app from your phone.
 
 The target user is a solo entrepreneur or vibe coder who tells AI what to build, checks results, and moves on. AFK makes that workflow mobile.
 
@@ -20,20 +21,22 @@ The target user is a solo entrepreneur or vibe coder who tells AI what to build,
 ```
 Phone / MacBook                         Mac mini (always on)
 │                                       │
-│  Telegram voice or text  ────────────►│  AFK daemon
-│                                       │    ├── Telegram bot (receives messages)
-│                                       │    ├── Orchestrator (routes to sessions)
+│  Telegram voice or text  ────────────>│  AFK daemon
+│                                       │    ├── Control Plane (Telegram bot)
+│                                       │    ├── Commands API (single entry point)
 │                                       │    ├── Session Manager
-│  ◄──── streaming responses,           │    │   ├── Session A → Claude Code subprocess
-│        permission buttons,             │    │   └── Session B → Claude Code subprocess
-│        completion notifications        │    └── Dashboard (localhost:7777)
+│  <──── streaming responses,           │    │   ├── Session A → Agent (Claude Code)
+│        permission buttons,             │    │   └── Session B → Agent (Claude Code)
+│        completion notifications        │    ├── EventBus (typed events)
+│                                       │    ├── Capabilities (tunnel, ...)
+│                                       │    └── Dashboard (localhost:7777)
 │                                       │
 ```
 
 1. You send a message (text or voice) in a Telegram forum topic
-2. AFK routes it to the Claude Code subprocess tied to that topic
-3. Claude Code streams responses back — forwarded to Telegram silently
-4. When Claude Code needs permission to run a tool, you get a notification with Allow/Deny buttons
+2. AFK routes it through the Commands API to the agent subprocess tied to that topic
+3. The agent streams responses back — published as events, rendered to Telegram silently
+4. When the agent needs permission to run a tool, you get a notification with Allow/Deny buttons
 5. On completion, you see cost and duration
 
 ## Prerequisites
@@ -75,6 +78,7 @@ export AFK_TELEGRAM_BOT_TOKEN="your-bot-token-here"
 export AFK_TELEGRAM_GROUP_ID="-100xxxxxxxxxx"
 # Optional
 export AFK_DASHBOARD_PORT="7777"
+export AFK_OPENAI_API_KEY="sk-..."  # Enables voice message transcription
 ```
 
 ### 4. Run
@@ -156,9 +160,10 @@ In the **General** topic:
 
 ```
 /new MyApp
+/new MyApp -v          # verbose mode — shows full tool input/output
 ```
 
-This creates a new forum topic (`MyApp-session-1`) and starts a Claude Code subprocess pointed at your project directory.
+This creates a new forum topic (`myapp-260218-143022`) with an isolated git worktree and starts an agent subprocess.
 
 ### Send Prompts
 
@@ -168,10 +173,19 @@ Switch to the session topic and type (or voice-message) your instructions:
 Add Stripe payment integration with webhook handling
 ```
 
-Claude Code works on it. You'll see streaming tool calls and responses. When it's done:
+The agent works on it. You'll see streaming tool calls and responses. When it's done:
 
 ```
 ✅ Done ($0.0523, 12.3s)
+```
+
+### Verify Remotely
+
+Start a dev server tunnel from the session topic:
+
+```
+/tunnel                # auto-detect dev server and expose via cloudflared
+/tunnel stop           # stop the tunnel
 ```
 
 ### Manage Sessions
@@ -180,6 +194,7 @@ Claude Code works on it. You'll see streaming tool calls and responses. When it'
 /sessions          # List all active sessions (General topic)
 /status            # Check current session state (session topic)
 /stop              # Stop current session (session topic)
+/complete          # Merge branch into main and clean up (session topic)
 ```
 
 ### Dashboard
@@ -192,30 +207,52 @@ Open `http://localhost:7777` in a browser to see:
 
 ## Architecture
 
-Hexagonal (port-adapter) pattern with two abstraction boundaries:
+3-layer hexagonal architecture with pluggable ports and adapters:
 
-- **MessengerPort** — abstract interface for messenger integrations. Telegram is the MVP adapter; Slack/Discord/native app can be added without touching core logic.
-- **STTPort** — abstract interface for speech-to-text (planned). Whisper local is the MVP implementation.
+- **Ports** — abstract interfaces (`AgentPort`, `ControlPlanePort`, `STTPort`) that define boundaries between layers
+- **Adapters** — concrete implementations (Claude Code, Telegram, Whisper API)
+- **Capabilities** — pluggable session-level features (tunnel, etc.)
+- **Commands API** — single entry point for all control planes
+- **EventBus** — typed pub/sub for agent output → control plane rendering
 
 ```
 afk/
-├── main.py              # Entry point, wires everything together
-├── config.py            # Environment variables → Config dataclass
-├── messenger/
-│   ├── port.py          # MessengerPort protocol
+├── main.py                          # Entry point, wires everything together
+├── ports/                           # Abstract interfaces (Protocol definitions only)
+│   ├── agent.py                     # AgentPort — agent runtime interface
+│   ├── control_plane.py             # ControlPlanePort — messenger/UI interface
+│   └── stt.py                       # STTPort — speech-to-text interface
+├── core/                            # Business logic (never imports adapters)
+│   ├── commands.py                  # Commands API — single entry point for all control planes
+│   ├── events.py                    # EventBus + typed event dataclasses
+│   ├── orchestrator.py              # Thin glue: wires messenger callbacks to Commands
+│   ├── session_manager.py           # Session lifecycle (create/stop/complete/query)
+│   ├── git_worktree.py              # Git worktree/branch operations
+│   └── config.py                    # CoreConfig
+├── adapters/                        # Concrete implementations of ports
+│   ├── claude_code/
+│   │   ├── agent.py                 # ClaudeCodeAgent (implements AgentPort)
+│   │   └── commit_helper.py         # AI-generated commit messages via Claude CLI
+│   ├── telegram/
+│   │   ├── config.py                # TelegramConfig
+│   │   └── renderer.py              # EventRenderer — subscribes to EventBus, renders to Telegram
+│   └── whisper/
+│       ├── config.py                # WhisperConfig
+│       └── stt.py                   # WhisperAPISTT (implements STTPort)
+├── capabilities/                    # Pluggable session-level features
+│   └── tunnel/
+│       └── tunnel.py                # TunnelCapability (cloudflared dev server tunneling)
+├── messenger/                       # Telegram bot (ControlPlanePort implementation)
+│   ├── port.py                      # MessengerPort protocol (legacy, see ports/control_plane.py)
 │   └── telegram/
-│       └── adapter.py   # Telegram bot (forum topics, inline buttons)
-├── core/
-│   ├── orchestrator.py  # Routes messages/commands to sessions
-│   ├── session_manager.py  # Session lifecycle (create/stop/query)
-│   └── claude_process.py   # Claude Code subprocess (stream-json stdin/stdout)
-├── dashboard/
-│   ├── server.py        # aiohttp web server + REST API
-│   ├── message_store.py # In-memory per-session message history
-│   └── index.html       # Single-page dashboard UI
+│       └── adapter.py               # TelegramAdapter (forum topics, inline buttons)
+├── dashboard/                       # Web dashboard
+│   ├── server.py                    # aiohttp web server + REST API
+│   ├── message_store.py             # In-memory per-session message history
+│   └── index.html                   # Single-page dashboard UI
 ├── storage/
-│   └── project_store.py # Project name → path registry (JSON file)
-└── data/                # Runtime data (gitignored)
+│   └── project_store.py             # Project name → path registry (JSON file)
+└── data/                            # Runtime data (gitignored)
 ```
 
 ## License

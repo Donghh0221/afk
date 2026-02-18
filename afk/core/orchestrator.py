@@ -1,40 +1,37 @@
+"""Orchestrator — thin glue wiring messenger callbacks to Commands.
+
+The Orchestrator registers messenger callbacks and delegates to the
+Command API.  Agent output rendering is handled separately by an
+EventRenderer (subscribes to the EventBus).
+"""
 from __future__ import annotations
 
 import logging
 import os
 from typing import TYPE_CHECKING
 
-from afk.core.session_manager import SessionManager, Session
-from afk.dashboard.message_store import MessageStore
-from afk.storage.project_store import ProjectStore
+from afk.core.commands import Commands
 
 if TYPE_CHECKING:
-    from afk.messenger.telegram.adapter import TelegramAdapter
-    from afk.voice.port import STTPort
+    from afk.ports.control_plane import ControlPlanePort
 
 logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
-    """Routes messenger events to session/project management."""
+    """Routes messenger events to the Commands API."""
 
     def __init__(
         self,
-        messenger: TelegramAdapter,
-        session_manager: SessionManager,
-        project_store: ProjectStore,
-        message_store: MessageStore | None = None,
-        stt: STTPort | None = None,
+        messenger: ControlPlanePort,
+        commands: Commands,
     ) -> None:
         self._messenger = messenger
-        self._sm = session_manager
-        self._ps = project_store
-        self._ms = message_store or MessageStore()
-        self._stt = stt
+        self._cmd = commands
 
         # Register messenger callbacks
         messenger.set_on_text(self._handle_text)
-        if stt is not None:
+        if commands.has_voice_support:
             messenger.set_on_voice(self._handle_voice)
         messenger.set_on_command("project", self._handle_project_command)
         messenger.set_on_command("new", self._handle_new_command)
@@ -46,21 +43,20 @@ class Orchestrator:
         messenger.set_on_unknown_command(self._handle_unknown_command)
         messenger.set_on_permission_response(self._handle_permission_response)
 
-        # Register Claude response callback
-        session_manager.set_on_claude_message(self._handle_claude_message)
+    # -- Text / Voice -------------------------------------------------------
 
     async def _handle_text(self, channel_id: str, text: str) -> None:
-        """Forward text messages to the corresponding session's Claude Code."""
+        """Forward text messages to the corresponding session's agent."""
         if channel_id == "general":
-            return  # Only commands in General topic
+            return
 
-        session = self._sm.get_session(channel_id)
+        session = self._cmd.cmd_get_session(channel_id)
         if not session:
-            return  # Ignore topics without a session
+            return
 
-        if not session.process.is_alive:
+        if not session.agent.is_alive:
             await self._messenger.send_message(
-                channel_id, "⚠️ Session has ended. Use /resume to restart."
+                channel_id, "⚠️ Session has ended. Use /new to start a new session."
             )
             return
 
@@ -71,33 +67,31 @@ class Orchestrator:
             )
             return
 
-        # Forward message to Claude Code
         msg_id = await self._messenger.send_message(
             channel_id, "⏳ Forwarding task...", silent=True
         )
-        ok = await self._sm.send_to_session(channel_id, text)
+        ok = await self._cmd.cmd_send_message(channel_id, text)
         if not ok:
             await self._messenger.edit_message(
                 channel_id, msg_id, "❌ Failed to forward message"
             )
         else:
-            self._ms.append(channel_id, "user", text)
             await self._messenger.edit_message(
                 channel_id, msg_id, "📝 Task started..."
             )
 
     async def _handle_voice(self, channel_id: str, file_id: str) -> None:
-        """Handle voice messages: download -> transcribe -> forward to session."""
+        """Handle voice messages: download -> transcribe -> forward."""
         if channel_id == "general":
             return
 
-        session = self._sm.get_session(channel_id)
+        session = self._cmd.cmd_get_session(channel_id)
         if not session:
             return
 
-        if not session.process.is_alive:
+        if not session.agent.is_alive:
             await self._messenger.send_message(
-                channel_id, "Session has ended. Use /resume to restart."
+                channel_id, "Session has ended. Use /new to start a new session."
             )
             return
 
@@ -115,35 +109,29 @@ class Orchestrator:
 
         try:
             audio_path = await self._messenger.download_voice(file_id)
-            text = await self._stt.transcribe(audio_path)
+            ok, text = await self._cmd.cmd_send_voice(channel_id, audio_path)
 
-            try:
-                os.unlink(audio_path)
-            except OSError:
-                pass
-
-            if not text or not text.strip():
-                await self._messenger.edit_message(
-                    channel_id, msg_id, "Could not transcribe voice message."
-                )
+            if not ok:
+                if not text:
+                    await self._messenger.edit_message(
+                        channel_id, msg_id, "Could not transcribe voice message."
+                    )
+                else:
+                    await self._messenger.edit_message(
+                        channel_id, msg_id, f"Voice failed: {text}"
+                    )
                 return
 
             await self._messenger.edit_message(
                 channel_id, msg_id, f"Voice: {text}"
             )
-
-            ok = await self._sm.send_to_session(channel_id, text)
-            if ok:
-                self._ms.append(channel_id, "user", f"[voice] {text}")
-            else:
-                await self._messenger.send_message(
-                    channel_id, "Failed to forward message"
-                )
         except Exception as e:
             logger.exception("Voice transcription failed for channel %s", channel_id)
             await self._messenger.edit_message(
                 channel_id, msg_id, f"Voice transcription failed: {e}"
             )
+
+    # -- Commands -----------------------------------------------------------
 
     async def _handle_project_command(
         self, channel_id: str, args: list[str]
@@ -163,21 +151,12 @@ class Orchestrator:
 
         if sub == "add" and len(args) >= 3:
             path, name = args[1], args[2]
-            try:
-                ok = self._ps.add(name, path)
-                if ok:
-                    await self._messenger.send_message(
-                        channel_id, f"✅ Project registered: {name} → {path}"
-                    )
-                else:
-                    await self._messenger.send_message(
-                        channel_id, f"⚠️ Project already registered: {name}"
-                    )
-            except ValueError as e:
-                await self._messenger.send_message(channel_id, f"❌ {e}")
+            ok, msg = self._cmd.cmd_add_project(name, path)
+            emoji = "✅" if ok else "⚠️"
+            await self._messenger.send_message(channel_id, f"{emoji} {msg}")
 
         elif sub == "list":
-            projects = self._ps.list_all()
+            projects = self._cmd.cmd_list_projects()
             if not projects:
                 await self._messenger.send_message(
                     channel_id, "No registered projects."
@@ -188,15 +167,10 @@ class Orchestrator:
 
         elif sub == "remove" and len(args) >= 2:
             name = args[1]
-            ok = self._ps.remove(name)
-            if ok:
-                await self._messenger.send_message(
-                    channel_id, f"✅ Project removed: {name}"
-                )
-            else:
-                await self._messenger.send_message(
-                    channel_id, f"⚠️ Unregistered project: {name}"
-                )
+            ok, msg = self._cmd.cmd_remove_project(name)
+            emoji = "✅" if ok else "⚠️"
+            await self._messenger.send_message(channel_id, f"{emoji} {msg}")
+
         else:
             await self._messenger.send_message(
                 channel_id, "❌ Invalid command. Use /project to see usage."
@@ -221,24 +195,13 @@ class Orchestrator:
             return
 
         project_name = positional[0]
-        project = self._ps.get(project_name)
-        if not project:
-            await self._messenger.send_message(
-                channel_id,
-                f"❌ Unregistered project: {project_name}\n"
-                "Check /project list for available projects.",
-            )
-            return
 
         await self._messenger.send_message(
             channel_id, f"⏳ Creating session: {project_name}...", silent=True
         )
 
         try:
-            session = await self._sm.create_session(
-                project_name, project["path"]
-            )
-            session.verbose = verbose
+            session = await self._cmd.cmd_new_session(project_name, verbose=verbose)
             verbose_label = " (verbose)" if verbose else ""
             topic_link = self._messenger.get_channel_link(session.channel_id)
             await self._messenger.send_message(
@@ -248,13 +211,20 @@ class Orchestrator:
                 link_url=topic_link,
                 link_label=f"Open {session.name}",
             )
+
+            project = self._cmd.cmd_get_project(project_name)
+            project_path = project["path"] if project else "unknown"
             await self._messenger.send_message(
                 session.channel_id,
                 f"🚀 Session started: {session.name}{verbose_label}\n"
-                f"📁 Project: {project_name} ({project['path']})\n"
+                f"📁 Project: {project_name} ({project_path})\n"
                 f"🌿 Branch: afk/{session.name}\n"
                 f"📂 Worktree: {session.worktree_path}\n\n"
                 f"Messages will be forwarded to Claude Code.",
+            )
+        except (ValueError, RuntimeError) as e:
+            await self._messenger.send_message(
+                channel_id, f"❌ {e}"
             )
         except Exception as e:
             logger.exception("Failed to create session")
@@ -266,7 +236,7 @@ class Orchestrator:
         self, channel_id: str, args: list[str]
     ) -> None:
         """/sessions — list all active sessions."""
-        sessions = self._sm.list_sessions()
+        sessions = self._cmd.cmd_list_sessions()
         if not sessions:
             await self._messenger.send_message(
                 channel_id, "No active sessions."
@@ -289,7 +259,7 @@ class Orchestrator:
         self, channel_id: str, args: list[str]
     ) -> None:
         """/stop — stop the current topic's session."""
-        session = self._sm.get_session(channel_id)
+        session = self._cmd.cmd_get_session(channel_id)
         if not session:
             await self._messenger.send_message(
                 channel_id, "⚠️ No session linked to this topic."
@@ -299,13 +269,13 @@ class Orchestrator:
         await self._messenger.send_message(
             channel_id, f"🔴 Session stopped: {session.name}"
         )
-        await self._sm.stop_session(channel_id)
+        await self._cmd.cmd_stop_session(channel_id)
 
     async def _handle_complete_command(
         self, channel_id: str, args: list[str]
     ) -> None:
         """/complete — merge session branch into main and clean up."""
-        session = self._sm.get_session(channel_id)
+        session = self._cmd.cmd_get_session(channel_id)
         if not session:
             await self._messenger.send_message(
                 channel_id, "⚠️ No session linked to this topic."
@@ -318,15 +288,13 @@ class Orchestrator:
             silent=True,
         )
 
-        success, message = await self._sm.complete_session(channel_id)
+        success, message = await self._cmd.cmd_complete_session(channel_id)
 
         if success:
-            # Topic is deleted — send confirmation to General
             await self._messenger.send_message(
                 "general", f"✅ {message}"
             )
         else:
-            # Session still alive — send error to session topic
             await self._messenger.send_message(
                 channel_id, f"❌ {message}"
             )
@@ -335,88 +303,62 @@ class Orchestrator:
         self, channel_id: str, args: list[str]
     ) -> None:
         """/status — query current session status."""
-        session = self._sm.get_session(channel_id)
-        if not session:
+        status = self._cmd.cmd_get_status(channel_id)
+        if not status:
             await self._messenger.send_message(
                 channel_id, "⚠️ No session linked to this topic."
             )
             return
 
-        alive = "✅ Running" if session.process.is_alive else "🔴 Stopped"
-        tunnel_info = ""
-        if session.tunnel and session.tunnel.is_alive:
-            tunnel_info = f"\nTunnel: {session.tunnel.public_url}"
+        alive = "✅ Running" if status.agent_alive else "🔴 Stopped"
+        tunnel_info = f"\nTunnel: {status.tunnel_url}" if status.tunnel_url else ""
         await self._messenger.send_message(
             channel_id,
-            f"📊 Session: {session.name}\n"
-            f"State: {session.state}\n"
+            f"📊 Session: {status.name}\n"
+            f"State: {status.state}\n"
             f"Process: {alive}\n"
-            f"Project: {session.project_name} ({session.project_path})\n"
-            f"Worktree: {session.worktree_path}{tunnel_info}",
+            f"Project: {status.project_name} ({status.project_path})\n"
+            f"Worktree: {status.worktree_path}{tunnel_info}",
         )
 
     async def _handle_tunnel_command(
         self, channel_id: str, args: list[str]
     ) -> None:
         """/tunnel [stop] — start or stop a dev server tunnel."""
-        from afk.core.tunnel import TunnelProcess, detect_dev_server
-
-        session = self._sm.get_session(channel_id)
-        if not session:
-            await self._messenger.send_message(
-                channel_id, "⚠️ No session linked to this topic."
-            )
-            return
-
         # /tunnel stop
         if args and args[0].lower() == "stop":
-            if not session.tunnel:
+            stopped = await self._cmd.cmd_stop_tunnel(channel_id)
+            if stopped:
+                await self._messenger.send_message(
+                    channel_id, "🔴 Tunnel stopped."
+                )
+            else:
                 await self._messenger.send_message(
                     channel_id, "No active tunnel to stop."
                 )
-                return
-            await session.tunnel.stop()
-            session.tunnel = None
-            await self._messenger.send_message(
-                channel_id, "🔴 Tunnel stopped."
-            )
             return
 
         # Already running — resend URL
-        if session.tunnel and session.tunnel.is_alive:
+        existing_url = self._cmd.cmd_get_tunnel_url(channel_id)
+        if existing_url:
             await self._messenger.send_message(
                 channel_id,
-                f"Tunnel already running: {session.tunnel.public_url}",
-                link_url=session.tunnel.public_url,
+                f"Tunnel already running: {existing_url}",
+                link_url=existing_url,
                 link_label="Open tunnel",
-            )
-            return
-
-        # Detect project type
-        config = detect_dev_server(session.worktree_path)
-        if not config:
-            await self._messenger.send_message(
-                channel_id,
-                "❌ Could not detect dev server.\n"
-                "Ensure the worktree has a package.json with a \"dev\" script.",
             )
             return
 
         msg_id = await self._messenger.send_message(
             channel_id,
-            f"⏳ Starting {config.framework} dev server (port {config.port}) "
-            f"+ cloudflared tunnel...",
+            "⏳ Starting dev server + cloudflared tunnel...",
             silent=True,
         )
 
         try:
-            tunnel = TunnelProcess()
-            url = await tunnel.start(session.worktree_path, config)
-            session.tunnel = tunnel
-
+            url = await self._cmd.cmd_start_tunnel(channel_id)
             await self._messenger.edit_message(
-                channel_id, msg_id,
-                f"✅ Tunnel active ({config.framework}, port {config.port})",
+                channel_id, msg_id, "✅ Tunnel active",
             )
             await self._messenger.send_message(
                 channel_id,
@@ -451,166 +393,4 @@ class Orchestrator:
     ) -> None:
         """Handle permission button response."""
         allowed = choice == "allow"
-        await self._sm.send_permission_response(channel_id, request_id, allowed)
-
-    async def _handle_claude_message(
-        self, session: Session, msg: dict
-    ) -> None:
-        """Forward Claude Code stdout messages to messenger."""
-        msg_type = msg.get("type")
-
-        try:
-            if msg_type == "system":
-                sid = msg.get("session_id")
-                if sid:
-                    session.claude_session_id = sid
-                session.state = "idle"
-                self._ms.append(
-                    session.channel_id, "system",
-                    f"Session ready (id={sid})" if sid else "System message",
-                )
-
-            elif msg_type == "assistant":
-                session.state = "running"
-                await self._handle_assistant_message(session, msg)
-
-            elif msg_type == "result":
-                cost_usd = msg.get("total_cost_usd", 0)
-                duration_ms = msg.get("duration_ms", 0)
-                duration_s = duration_ms / 1000 if duration_ms else 0
-
-                cost_text = f"${cost_usd:.4f}" if cost_usd else ""
-                time_text = f"{duration_s:.1f}s" if duration_s else ""
-                info_parts = [p for p in [cost_text, time_text] if p]
-                info = f" ({', '.join(info_parts)})" if info_parts else ""
-
-                meta = {}
-                if cost_usd:
-                    meta["cost"] = cost_usd
-                if duration_s:
-                    meta["duration"] = duration_s
-                self._ms.append(
-                    session.channel_id, "result", f"Done{info}", meta=meta,
-                )
-
-                session.state = "idle"
-                await self._messenger.send_message(
-                    session.channel_id,
-                    f"✅ Done{info}",
-                )
-
-        except Exception:
-            logger.exception(
-                "Error handling Claude message (type=%s) for %s",
-                msg_type, session.name,
-            )
-
-    async def _handle_assistant_message(
-        self, session: Session, msg: dict
-    ) -> None:
-        """Process assistant messages — display text and tool use separately."""
-        # stream-json: content can be at top level or nested under message
-        content_blocks = msg.get("content") or msg.get("message", {}).get("content", [])
-
-        if isinstance(content_blocks, str):
-            if content_blocks:
-                self._ms.append(session.channel_id, "assistant", content_blocks)
-                await self._messenger.send_message(
-                    session.channel_id, content_blocks, silent=True
-                )
-            return
-
-        texts: list[str] = []
-        tool_lines: list[str] = []
-        result_lines: list[str] = []
-
-        for block in content_blocks:
-            if not isinstance(block, dict):
-                continue
-            block_type = block.get("type")
-
-            if block_type == "text":
-                text = block.get("text", "")
-                if text:
-                    texts.append(text)
-
-            elif block_type == "tool_use":
-                tool_name = block.get("name", "unknown")
-                tool_input = block.get("input", {})
-                args_str = self._summarize_tool_args(tool_input)
-                tool_lines.append(f"🔧 {tool_name}: {args_str}")
-
-            elif block_type == "tool_result":
-                result_text = self._summarize_tool_result(block)
-                if result_text:
-                    result_lines.append(result_text)
-
-        if texts:
-            text_body = "\n".join(texts)
-            self._ms.append(session.channel_id, "assistant", text_body)
-            await self._messenger.send_message(
-                session.channel_id, text_body, silent=True
-            )
-        if tool_lines:
-            tool_body = "\n".join(tool_lines)
-            self._ms.append(session.channel_id, "tool", tool_body)
-            if session.verbose:
-                await self._messenger.send_message(
-                    session.channel_id, tool_body, silent=True
-                )
-        if result_lines:
-            result_body = "\n".join(result_lines)
-            self._ms.append(session.channel_id, "tool", result_body)
-            if session.verbose:
-                await self._messenger.send_message(
-                    session.channel_id, result_body, silent=True
-                )
-
-    @staticmethod
-    def _summarize_tool_args(tool_input: dict | str) -> str:
-        """Summarize tool arguments into human-readable form."""
-        if isinstance(tool_input, str):
-            return tool_input[:300]
-        if isinstance(tool_input, dict):
-            if "command" in tool_input:
-                return tool_input["command"]
-            elif "content" in tool_input:
-                return tool_input["content"][:200]
-            elif "file_path" in tool_input:
-                return tool_input["file_path"]
-            else:
-                return str(tool_input)[:300]
-        return str(tool_input)[:300]
-
-    @staticmethod
-    def _summarize_tool_result(block: dict) -> str:
-        """Convert tool_result block into human-readable summary."""
-        content = block.get("content")
-        is_error = block.get("is_error", False)
-        prefix = "❌ Tool error" if is_error else "📎 Tool result"
-
-        if not content:
-            return ""
-
-        if isinstance(content, str):
-            text = content
-        elif isinstance(content, list):
-            # Extract text from content block list
-            parts = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    parts.append(item.get("text", ""))
-                elif isinstance(item, str):
-                    parts.append(item)
-            text = "\n".join(parts)
-        else:
-            text = str(content)
-
-        if not text.strip():
-            return ""
-
-        # Truncate long results
-        if len(text) > 500:
-            text = text[:500] + "…"
-
-        return f"{prefix}: {text}"
+        await self._cmd.cmd_permission_response(channel_id, request_id, allowed)

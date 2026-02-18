@@ -8,10 +8,17 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Awaitable
 
-from afk.core.claude_process import ClaudeProcess
+from afk.core.events import (
+    AgentAssistantEvent,
+    AgentResultEvent,
+    AgentStoppedEvent,
+    AgentSystemEvent,
+    EventBus,
+)
 from afk.core.git_worktree import (
+    CommitMessageFn,
     commit_worktree_changes,
     create_worktree,
     delete_branch,
@@ -21,10 +28,9 @@ from afk.core.git_worktree import (
     remove_worktree,
 )
 
-from afk.core.tunnel import TunnelProcess
-
 if TYPE_CHECKING:
-    from afk.messenger.telegram.adapter import TelegramAdapter
+    from afk.ports.agent import AgentPort
+    from afk.ports.control_plane import ControlPlanePort
     from afk.storage.project_store import ProjectStore
 
 logger = logging.getLogger(__name__)
@@ -37,13 +43,16 @@ class Session:
     project_path: str  # main repo path (never changes)
     worktree_path: str  # isolated worktree directory for this session
     channel_id: str
-    process: ClaudeProcess
-    claude_session_id: str | None = None
+    agent: AgentPort
+    agent_session_id: str | None = None
     state: str = "idle"  # idle | running | waiting_permission | stopped
     verbose: bool = False
     created_at: float = field(default_factory=time.time)
-    tunnel: TunnelProcess | None = None
     _response_task: asyncio.Task | None = field(default=None, repr=False)
+
+
+# Callback type for session cleanup (capabilities register these)
+SessionCleanupFn = Callable[[str], Awaitable[None]]
 
 
 class SessionManager:
@@ -51,22 +60,42 @@ class SessionManager:
 
     def __init__(
         self,
-        messenger: TelegramAdapter,
+        messenger: ControlPlanePort,
         data_dir: Path,
+        event_bus: EventBus | None = None,
+        agent_factory: Callable[[], AgentPort] | None = None,
+        commit_message_fn: CommitMessageFn | None = None,
     ) -> None:
         self._messenger = messenger
         self._sessions: dict[str, Session] = {}  # channel_id -> Session
         self._data_dir = data_dir
-        self._on_claude_message: asyncio.Callable | None = None
+        self._event_bus = event_bus or EventBus()
+        self._agent_factory = agent_factory
+        self._commit_message_fn = commit_message_fn
+        self._cleanup_callbacks: list[SessionCleanupFn] = []
 
-    def set_on_claude_message(self, callback) -> None:
-        """Register Claude response callback: (session, message_dict) -> None"""
-        self._on_claude_message = callback
+    def add_cleanup_callback(self, callback: SessionCleanupFn) -> None:
+        """Register a cleanup callback called when a session stops/completes."""
+        self._cleanup_callbacks.append(callback)
+
+    async def _run_cleanup(self, channel_id: str) -> None:
+        """Run all registered cleanup callbacks for a session."""
+        for cb in self._cleanup_callbacks:
+            try:
+                await cb(channel_id)
+            except Exception:
+                logger.exception("Cleanup callback failed for %s", channel_id)
+
+    def _create_agent(self) -> AgentPort:
+        """Create a new agent instance using the configured factory."""
+        if self._agent_factory is None:
+            raise RuntimeError("No agent_factory configured")
+        return self._agent_factory()
 
     async def create_session(
         self, project_name: str, project_path: str
     ) -> Session:
-        """Create new session: git worktree + forum topic + Claude Code process."""
+        """Create new session: git worktree + forum topic + agent process."""
         # Validate git repository
         if not await is_git_repo(project_path):
             raise RuntimeError(
@@ -99,9 +128,9 @@ class SessionManager:
         # Create forum topic (only after git succeeds — no orphan topics)
         channel_id = await self._messenger.create_session_channel(session_name)
 
-        # Start Claude Code process in the worktree directory
-        process = ClaudeProcess()
-        await process.start(worktree_path)
+        # Start agent process in the worktree directory
+        agent = self._create_agent()
+        await agent.start(worktree_path)
 
         session = Session(
             name=session_name,
@@ -109,7 +138,7 @@ class SessionManager:
             project_path=project_path,
             worktree_path=worktree_path,
             channel_id=channel_id,
-            process=process,
+            agent=agent,
         )
 
         self._sessions[channel_id] = session
@@ -135,14 +164,12 @@ class SessionManager:
         if session._response_task:
             session._response_task.cancel()
 
-        # Stop tunnel if active
-        if session.tunnel:
-            await session.tunnel.stop()
-            session.tunnel = None
+        # Run capability cleanup (tunnel, etc.)
+        await self._run_cleanup(channel_id)
 
-        # Stop Claude process first (releases file handles on worktree)
-        await session.process.stop()
-        session.claude_session_id = session.process.session_id
+        # Stop agent process first (releases file handles on worktree)
+        await session.agent.stop()
+        session.agent_session_id = session.agent.session_id
 
         # Remove git worktree and branch (best-effort)
         branch_name = f"afk/{session.name}"
@@ -169,20 +196,21 @@ class SessionManager:
         if not session:
             return False, "No session found for this topic."
 
-        # 1. Stop tunnel if active
-        if session.tunnel:
-            await session.tunnel.stop()
-            session.tunnel = None
+        # 1. Run capability cleanup (tunnel, etc.)
+        await self._run_cleanup(channel_id)
 
-        # 2. Stop Claude process (releases file handles on worktree)
+        # 2. Stop agent process (releases file handles on worktree)
         session.state = "stopped"
         if session._response_task:
             session._response_task.cancel()
-        await session.process.stop()
-        session.claude_session_id = session.process.session_id
+        await session.agent.stop()
+        session.agent_session_id = session.agent.session_id
 
         # 3. Commit any uncommitted changes in the worktree
-        await commit_worktree_changes(session.worktree_path, session.name)
+        await commit_worktree_changes(
+            session.worktree_path, session.name,
+            commit_message_fn=self._commit_message_fn,
+        )
 
         # 4. Merge branch into main (rebase in worktree, remove worktree, ff-merge)
         branch_name = f"afk/{session.name}"
@@ -191,11 +219,11 @@ class SessionManager:
         )
 
         if not success:
-            # Restart Claude so session stays usable
+            # Restart agent so session stays usable
             session.state = "idle"
-            session.process = ClaudeProcess()
-            await session.process.start(
-                session.worktree_path, session.claude_session_id
+            session.agent = self._create_agent()
+            await session.agent.start(
+                session.worktree_path, session.agent_session_id
             )
             session._response_task = asyncio.create_task(
                 self._read_loop(session)
@@ -234,11 +262,11 @@ class SessionManager:
     async def send_to_session(self, channel_id: str, text: str) -> bool:
         """Forward a message to a session."""
         session = self._sessions.get(channel_id)
-        if not session or not session.process.is_alive:
+        if not session or not session.agent.is_alive:
             return False
 
         session.state = "running"
-        await session.process.send_message(text)
+        await session.agent.send_message(text)
         return True
 
     async def send_permission_response(
@@ -246,25 +274,24 @@ class SessionManager:
     ) -> bool:
         """Forward permission response to a session."""
         session = self._sessions.get(channel_id)
-        if not session or not session.process.is_alive:
+        if not session or not session.agent.is_alive:
             return False
 
-        await session.process.send_permission_response(request_id, allowed)
+        await session.agent.send_permission_response(request_id, allowed)
         session.state = "running"
         return True
 
     async def _read_loop(self, session: Session) -> None:
-        """Claude Code stdout read loop."""
+        """Agent stdout read loop — publishes events to EventBus."""
         try:
-            async for msg in session.process.read_responses():
-                if self._on_claude_message:
-                    try:
-                        await self._on_claude_message(session, msg)
-                    except Exception:
-                        logger.exception(
-                            "Error handling message for %s: %s",
-                            session.name, msg.get("type"),
-                        )
+            async for msg in session.agent.read_responses():
+                try:
+                    self._publish_agent_event(session, msg)
+                except Exception:
+                    logger.exception(
+                        "Error publishing event for %s: %s",
+                        session.name, msg.get("type"),
+                    )
         except asyncio.CancelledError:
             pass
         except Exception:
@@ -272,26 +299,47 @@ class SessionManager:
         finally:
             if session.state != "stopped":
                 session.state = "stopped"
-                if session.tunnel:
-                    await session.tunnel.stop()
-                    session.tunnel = None
+                await self._run_cleanup(session.channel_id)
                 logger.info("Session ended: %s", session.name)
-                try:
-                    await self._messenger.send_message(
-                        session.channel_id,
-                        f"⚠️ Session ended: {session.name}\n"
-                        f"Use /new in General to start a new session.",
-                    )
-                except Exception:
-                    pass
-                try:
-                    await self._messenger.close_session_channel(
-                        session.channel_id
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to delete topic for %s", session.name
-                    )
+                self._event_bus.publish(AgentStoppedEvent(
+                    channel_id=session.channel_id,
+                    session_name=session.name,
+                ))
+
+    def _publish_agent_event(self, session: Session, msg: dict) -> None:
+        """Convert raw agent message to typed event and publish."""
+        msg_type = msg.get("type")
+
+        if msg_type == "system":
+            sid = msg.get("session_id")
+            if sid:
+                session.agent_session_id = sid
+            session.state = "idle"
+            self._event_bus.publish(AgentSystemEvent(
+                channel_id=session.channel_id,
+                agent_session_id=sid,
+            ))
+
+        elif msg_type == "assistant":
+            session.state = "running"
+            content_blocks = (
+                msg.get("content")
+                or msg.get("message", {}).get("content", [])
+            )
+            self._event_bus.publish(AgentAssistantEvent(
+                channel_id=session.channel_id,
+                content_blocks=content_blocks,
+                session_name=session.name,
+                verbose=session.verbose,
+            ))
+
+        elif msg_type == "result":
+            session.state = "idle"
+            self._event_bus.publish(AgentResultEvent(
+                channel_id=session.channel_id,
+                cost_usd=msg.get("total_cost_usd", 0),
+                duration_ms=msg.get("duration_ms", 0),
+            ))
 
     async def cleanup_orphan_worktrees(
         self, project_store: ProjectStore
@@ -325,7 +373,7 @@ class SessionManager:
                 "project_path": s.project_path,
                 "worktree_path": s.worktree_path,
                 "channel_id": s.channel_id,
-                "claude_session_id": s.process.session_id,
+                "agent_session_id": s.agent.session_id,
                 "state": s.state,
             }
         path = self._data_dir / "sessions.json"
