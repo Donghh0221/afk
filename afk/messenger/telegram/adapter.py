@@ -165,6 +165,14 @@ class TelegramAdapter:
         )
         return str(topic.message_thread_id)
 
+    async def close_session_channel(self, channel_id: str) -> None:
+        """Delete forum topic."""
+        bot = self._app.bot
+        await bot.delete_forum_topic(
+            chat_id=self._group_id,
+            message_thread_id=int(channel_id),
+        )
+
     async def _handle_text(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
