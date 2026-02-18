@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import shutil
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -26,38 +28,50 @@ async def is_git_repo(project_path: str) -> bool:
     return code == 0
 
 
-def _build_commit_message(name_status_output: str) -> str:
-    """Build a commit message from `git diff --cached --name-status` output.
+async def _generate_commit_message(worktree_path: str) -> str:
+    """Use Claude Code CLI to generate a commit message from staged diff.
 
-    Groups files by action (Add/Modify/Delete) and extracts the top-level
-    module or filename to produce a short summary line.
+    Falls back to a generic message on any failure.
     """
-    actions: dict[str, list[str]] = {"Add": [], "Update": [], "Delete": []}
-    prefix_map = {"A": "Add", "M": "Update", "D": "Delete"}
+    claude_path = shutil.which("claude")
+    if not claude_path:
+        return "Update files"
 
-    for line in name_status_output.splitlines():
-        parts = line.split("\t", 1)
-        if len(parts) != 2:
-            continue
-        status, filepath = parts[0][0], parts[1]  # first char of status
-        action = prefix_map.get(status, "Update")
-        # Use first meaningful path component as module name
-        segments = filepath.split("/")
-        if len(segments) >= 2:
-            name = segments[1] if segments[0] in ("afk", "src", "lib") else segments[0]
-        else:
-            name = segments[0]
-        # Remove extension for brevity
-        name = name.rsplit(".", 1)[0] if "." in name else name
-        if name not in actions[action]:
-            actions[action].append(name)
+    # Get the staged diff (truncate to avoid overwhelming the prompt)
+    code, diff_output, _ = await _run_git(
+        ["diff", "--cached", "--stat"],
+        cwd=worktree_path,
+    )
+    if code != 0 or not diff_output:
+        return "Update files"
 
-    parts = []
-    for action, modules in actions.items():
-        if modules:
-            parts.append(f"{action} {', '.join(modules)}")
+    prompt = (
+        "Based on the following git diff stat, write a concise commit message "
+        "(single line, max 72 chars, imperative mood, no quotes). "
+        "Just output the message, nothing else.\n\n"
+        f"{diff_output}"
+    )
 
-    return "; ".join(parts) if parts else "Update files"
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            claude_path, "-p", "--no-session-persistence", prompt,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=worktree_path,
+            env=env,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        msg = stdout.decode().strip()
+        if msg and proc.returncode == 0:
+            # Take first line only, enforce max length
+            first_line = msg.splitlines()[0].strip().strip('"\'')
+            return first_line[:72] if first_line else "Update files"
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.warning("Claude commit message generation failed: %s", e)
+
+    return "Update files"
 
 
 async def commit_worktree_changes(
@@ -86,12 +100,8 @@ async def commit_worktree_changes(
         # No staged changes
         return False, "No changes to commit."
 
-    # Build a descriptive commit message from changed files
-    code, name_status, _ = await _run_git(
-        ["diff", "--cached", "--name-status"],
-        cwd=worktree_path,
-    )
-    commit_msg = _build_commit_message(name_status) if code == 0 else "Update files"
+    # Generate a descriptive commit message via Claude Code
+    commit_msg = await _generate_commit_message(worktree_path)
 
     # Commit
     code, stdout, stderr = await _run_git(
