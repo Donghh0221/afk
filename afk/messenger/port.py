@@ -32,6 +32,10 @@ class MessengerPort(Protocol):
         """Create a session-dedicated channel. Returns: channel_id."""
         ...
 
+    def get_channel_link(self, channel_id: str) -> str | None:
+        """Return a deep-link URL to the channel, or None if unsupported."""
+        ...
+
     async def close_session_channel(self, channel_id: str) -> None:
         """Delete/close a session-dedicated channel."""
         ...

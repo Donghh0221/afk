@@ -174,10 +174,13 @@ class Orchestrator:
             )
             session.verbose = verbose
             verbose_label = " (verbose)" if verbose else ""
+            topic_link = self._messenger.get_channel_link(session.channel_id)
+            link_line = f"\n👉 {topic_link}" if topic_link else ""
             await self._messenger.send_message(
                 channel_id,
                 f"✅ Session created: {session.name}{verbose_label}\n"
-                f"Send messages in the topic to talk to Claude Code.",
+                f"Send messages in the topic to talk to Claude Code."
+                f"{link_line}",
             )
             await self._messenger.send_message(
                 session.channel_id,
