@@ -184,7 +184,9 @@ class TelegramAdapter:
         # Telegram supergroup IDs start with -100; strip it for the deep-link.
         raw = str(self._group_id)
         internal_id = raw.removeprefix("-100")
-        return f"https://t.me/c/{internal_id}/{channel_id}"
+        # Use tg:// scheme — https://t.me/c/ links don't auto-open the
+        # Telegram app on iOS, whereas tg://privatepost does.
+        return f"tg://privatepost?channel={internal_id}&post={channel_id}"
 
     async def close_session_channel(self, channel_id: str) -> None:
         """Delete forum topic."""
