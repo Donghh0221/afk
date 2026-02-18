@@ -312,7 +312,7 @@ class Orchestrator:
 
     # Command handlers
     async def _handle_project_command(channel_id, args)   # /project add|list|remove
-    async def _handle_new_command(channel_id, args)        # /new <project> [--verbose]
+    async def _handle_new_command(channel_id, args)        # /new <project> [-v|--verbose]
     async def _handle_sessions_command(channel_id, args)   # /sessions
     async def _handle_stop_command(channel_id, args)       # /stop
     async def _handle_complete_command(channel_id, args)    # /complete

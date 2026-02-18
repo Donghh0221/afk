@@ -204,18 +204,18 @@ class Orchestrator:
     async def _handle_new_command(
         self, channel_id: str, args: list[str]
     ) -> None:
-        """/new <project_name> [--verbose] — create a new session."""
+        """/new <project_name> [-v|--verbose] — create a new session."""
         if not args:
             await self._messenger.send_message(
-                channel_id, "Usage: /new <project_name> [--verbose]"
+                channel_id, "Usage: /new <project_name> [-v|--verbose]"
             )
             return
 
-        verbose = "--verbose" in args
-        positional = [a for a in args if not a.startswith("--")]
+        verbose = "--verbose" in args or "-v" in args
+        positional = [a for a in args if not a.startswith("-")]
         if not positional:
             await self._messenger.send_message(
-                channel_id, "Usage: /new <project_name> [--verbose]"
+                channel_id, "Usage: /new <project_name> [-v|--verbose]"
             )
             return
 
@@ -360,7 +360,7 @@ class Orchestrator:
             f"❓ Unknown command: {command_text}\n\n"
             "Available commands:\n"
             "/project add|list|remove — manage projects\n"
-            "/new <project> [--verbose] — create session\n"
+            "/new <project> [-v|--verbose] — create session\n"
             "/sessions — list active sessions\n"
             "/stop — stop current session\n"
             "/complete — merge & cleanup session\n"
