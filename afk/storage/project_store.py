@@ -27,9 +27,19 @@ class ProjectStore:
             json.dumps(self._projects, indent=2, ensure_ascii=False)
         )
 
-    def add(self, name: str, path: str) -> bool:
-        """Register a project. Returns False if already exists."""
+    def _find_key(self, name: str) -> str | None:
+        """Find the actual key for a case-insensitive name lookup."""
         if name in self._projects:
+            return name
+        name_lower = name.lower()
+        for key in self._projects:
+            if key.lower() == name_lower:
+                return key
+        return None
+
+    def add(self, name: str, path: str) -> bool:
+        """Register a project. Returns False if already exists (case-insensitive)."""
+        if self._find_key(name) is not None:
             return False
         resolved = str(Path(path).expanduser().resolve())
         if not Path(resolved).is_dir():
@@ -42,16 +52,18 @@ class ProjectStore:
         return True
 
     def remove(self, name: str) -> bool:
-        """Unregister a project."""
-        if name not in self._projects:
+        """Unregister a project (case-insensitive)."""
+        key = self._find_key(name)
+        if key is None:
             return False
-        del self._projects[name]
+        del self._projects[key]
         self._save()
         return True
 
     def get(self, name: str) -> dict | None:
-        """Look up a project."""
-        return self._projects.get(name)
+        """Look up a project (case-insensitive)."""
+        key = self._find_key(name)
+        return self._projects[key] if key is not None else None
 
     def list_all(self) -> dict[str, dict]:
         """List all projects."""
