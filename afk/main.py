@@ -87,7 +87,10 @@ async def main() -> None:
     tunnel_capability = TunnelCapability()
     session_manager.add_cleanup_callback(tunnel_capability.cleanup_session)
 
-    # Clean up any orphan worktrees from previous crash
+    # Recover sessions from previous run (must happen before orphan cleanup)
+    recovered_sessions = await session_manager.recover_sessions(project_store)
+
+    # Clean up orphan worktrees (skips recovered session worktrees)
     await session_manager.cleanup_orphan_worktrees(project_store)
 
     # Command API — single entry point for all control planes
@@ -125,14 +128,27 @@ async def main() -> None:
     await messenger.start()
     logger.info("AFK is running. Press Ctrl+C to stop.")
 
+    # Notify Telegram about recovered sessions
+    for session in recovered_sessions:
+        try:
+            await messenger.send_message(
+                session.channel_id,
+                f"Session recovered: {session.name}\n"
+                f"Agent resumed with previous context.",
+                silent=True,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to send recovery notification for %s", session.name
+            )
+
     # Wait for shutdown
     await stop_event.wait()
 
-    # Cleanup
+    # Cleanup — suspend sessions (preserve worktrees for recovery)
     logger.info("Shutting down...")
     renderer.stop()
-    for session in session_manager.list_sessions():
-        await session_manager.stop_session(session.channel_id)
+    await session_manager.suspend_all_sessions()
     await messenger.stop()
     await dashboard.stop()
     logger.info("AFK stopped.")

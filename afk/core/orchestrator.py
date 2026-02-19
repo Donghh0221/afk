@@ -250,6 +250,7 @@ class Orchestrator:
                 "running": "🏃",
                 "waiting_permission": "⏳",
                 "stopped": "🔴",
+                "suspended": "💾",
             }.get(s.state, "❓")
             lines.append(f"{status_emoji} {s.name} [{s.state}]")
 

@@ -143,6 +143,7 @@ class SessionManager:
         )
 
         self._sessions[channel_id] = session
+        self._save_sessions()
 
         # Start response reading task
         session._response_task = asyncio.create_task(
@@ -178,8 +179,8 @@ class SessionManager:
             session.project_path, session.worktree_path, branch_name
         )
 
-        self._save_sessions()
         del self._sessions[channel_id]
+        self._save_sessions()
         # Delete the forum topic
         try:
             await self._messenger.close_session_channel(channel_id)
@@ -240,8 +241,8 @@ class SessionManager:
         await delete_branch(session.project_path, branch_name)
 
         # 6. Clean up session state
-        self._save_sessions()
         del self._sessions[channel_id]
+        self._save_sessions()
 
         # 7. Delete the forum topic
         try:
@@ -328,6 +329,7 @@ class SessionManager:
             sid = msg.get("session_id")
             if sid:
                 session.agent_session_id = sid
+                self._save_sessions()
             session.state = "idle"
             self._event_bus.publish(AgentSystemEvent(
                 channel_id=session.channel_id,
@@ -357,10 +359,122 @@ class SessionManager:
                 duration_ms=msg.get("duration_ms", 0),
             ))
 
+    async def suspend_all_sessions(self) -> None:
+        """Gracefully suspend all sessions for daemon restart recovery.
+
+        Stops agent processes but preserves worktrees and forum topics
+        so sessions can be recovered on next startup.
+        """
+        for channel_id, session in self._sessions.items():
+            if session._response_task:
+                session._response_task.cancel()
+
+            session.agent_session_id = session.agent.session_id or session.agent_session_id
+
+            await self._run_cleanup(channel_id)
+            await session.agent.stop()
+
+            session.state = "suspended"
+
+        self._save_sessions()
+        logger.info("Suspended %d sessions for recovery", len(self._sessions))
+
+    async def recover_sessions(self, project_store: ProjectStore) -> list[Session]:
+        """Load sessions from sessions.json and resume agent processes.
+
+        Returns list of successfully recovered sessions.
+        Must be called before cleanup_orphan_worktrees().
+        """
+        path = self._data_dir / "sessions.json"
+        if not path.exists():
+            return []
+
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to read sessions.json: %s", e)
+            return []
+
+        recovered: list[Session] = []
+
+        for channel_id, info in data.items():
+            session_name = info.get("name", "unknown")
+            worktree_path = info.get("worktree_path", "")
+            project_name = info.get("project_name", "")
+            project_path = info.get("project_path", "")
+            agent_session_id = info.get("agent_session_id")
+            verbose = info.get("verbose", False)
+            created_at = info.get("created_at", time.time())
+
+            if not Path(worktree_path).is_dir():
+                logger.warning(
+                    "Skip recovery for %s: worktree missing (%s)",
+                    session_name, worktree_path,
+                )
+                continue
+
+            if not project_store.get(project_name):
+                logger.warning(
+                    "Skip recovery for %s: project '%s' not registered",
+                    session_name, project_name,
+                )
+                continue
+
+            if not agent_session_id:
+                logger.warning(
+                    "Skip recovery for %s: no agent_session_id",
+                    session_name,
+                )
+                continue
+
+            try:
+                agent = self._create_agent()
+                await agent.start(worktree_path, agent_session_id)
+
+                session = Session(
+                    name=session_name,
+                    project_name=project_name,
+                    project_path=project_path,
+                    worktree_path=worktree_path,
+                    channel_id=channel_id,
+                    agent=agent,
+                    agent_session_id=agent_session_id,
+                    verbose=verbose,
+                    created_at=created_at,
+                )
+
+                self._sessions[channel_id] = session
+
+                session._response_task = asyncio.create_task(
+                    self._read_loop(session)
+                )
+
+                recovered.append(session)
+                logger.info(
+                    "Recovered session: %s (channel=%s)",
+                    session_name, channel_id,
+                )
+            except Exception:
+                logger.exception("Failed to recover session %s", session_name)
+
+        self._save_sessions()
+
+        if recovered:
+            logger.info("Recovered %d sessions from previous run", len(recovered))
+
+        return recovered
+
     async def cleanup_orphan_worktrees(
         self, project_store: ProjectStore
     ) -> None:
-        """Remove afk/ worktrees left behind by a previous crash."""
+        """Remove afk/ worktrees left behind by a previous crash.
+
+        Skips worktrees belonging to active (recovered) sessions.
+        """
+        active_worktree_paths = {
+            s.worktree_path for s in self._sessions.values()
+        }
+
         for project_name, info in project_store.list_all().items():
             project_path = info["path"]
             try:
@@ -372,6 +486,13 @@ class SessionManager:
                 continue
 
             for wt in orphans:
+                if wt["path"] in active_worktree_paths:
+                    logger.info(
+                        "Keeping recovered worktree: %s (branch=%s)",
+                        wt["path"], wt["branch"],
+                    )
+                    continue
+
                 logger.warning(
                     "Orphan worktree detected: %s (branch=%s) — removing",
                     wt["path"],
@@ -380,7 +501,7 @@ class SessionManager:
                 await remove_worktree(project_path, wt["path"], wt["branch"])
 
     def _save_sessions(self) -> None:
-        """Save session data for recovery."""
+        """Save session data for recovery (atomic write)."""
         data = {}
         for cid, s in self._sessions.items():
             data[cid] = {
@@ -389,9 +510,13 @@ class SessionManager:
                 "project_path": s.project_path,
                 "worktree_path": s.worktree_path,
                 "channel_id": s.channel_id,
-                "agent_session_id": s.agent.session_id,
+                "agent_session_id": s.agent.session_id or s.agent_session_id,
                 "state": s.state,
+                "verbose": s.verbose,
+                "created_at": s.created_at,
             }
         path = self._data_dir / "sessions.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        tmp_path = path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        tmp_path.rename(path)
