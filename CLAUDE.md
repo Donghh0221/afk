@@ -14,6 +14,7 @@ AFK ("Away From Keyboard") is a Python daemon that serves as a remote control pl
 - **python-dotenv>=1.0** — environment variable loading
 - **openai>=1.0** — Whisper API for voice transcription (optional, only if API key is set)
 - **Claude Code CLI** — headless mode via `--input-format stream-json --output-format stream-json`
+- **OpenAI Codex CLI** — non-interactive mode via `codex exec --json` (optional, selected via `AFK_AGENT=codex`)
 - **cloudflared** — quick tunnels for remote verification (optional)
 - **uv** — Python package manager (uv.lock)
 
@@ -21,7 +22,7 @@ AFK ("Away From Keyboard") is a Python daemon that serves as a remote control pl
 
 3-layer hexagonal (port-adapter) architecture with three abstraction boundaries:
 
-- **AgentPort** (`ports/agent.py`) — abstract interface for agent runtimes. MVP adapter: `adapters/claude_code/agent.py` (Claude Code CLI).
+- **AgentPort** (`ports/agent.py`) — abstract interface for agent runtimes. Adapters: `adapters/claude_code/agent.py` (Claude Code CLI), `adapters/codex/agent.py` (OpenAI Codex CLI).
 - **ControlPlanePort** (`ports/control_plane.py`) — abstract interface for control plane integrations. MVP adapter: `messenger/telegram/adapter.py` (forum topics for session isolation).
 - **STTPort** (`ports/stt.py`) — abstract interface for speech-to-text. MVP adapter: `adapters/whisper/stt.py` (OpenAI Whisper API).
 
@@ -45,6 +46,7 @@ AFK ("Away From Keyboard") is a Python daemon that serves as a remote control pl
 ### Adapters
 
 - **ClaudeCodeAgent** (`adapters/claude_code/agent.py`) — implements AgentPort, wraps Claude Code subprocess using stream-json protocol.
+- **CodexAgent** (`adapters/codex/agent.py`) — implements AgentPort, wraps OpenAI Codex CLI using `codex exec --json` (fire-and-complete model with `resume` for multi-turn).
 - **commit_helper** (`adapters/claude_code/commit_helper.py`) — generates commit messages using Claude Code CLI `-p` mode.
 - **EventRenderer** (`adapters/telegram/renderer.py`) — subscribes to EventBus events, renders them as Telegram messages.
 - **WhisperAPISTT** (`adapters/whisper/stt.py`) — implements STTPort using OpenAI Whisper API.
@@ -88,6 +90,8 @@ afk/
 │   ├── claude_code/
 │   │   ├── agent.py                 # ClaudeCodeAgent (implements AgentPort)
 │   │   └── commit_helper.py         # AI commit message generation
+│   ├── codex/
+│   │   └── agent.py                 # CodexAgent (implements AgentPort)
 │   ├── telegram/
 │   │   ├── config.py                # TelegramConfig
 │   │   └── renderer.py              # EventRenderer (EventBus → Telegram)
@@ -123,6 +127,7 @@ afk/
 
 - `AFK_TELEGRAM_BOT_TOKEN` (required) — Telegram bot token
 - `AFK_TELEGRAM_GROUP_ID` (required) — Telegram group/supergroup ID
+- `AFK_AGENT` (optional, default: `claude`) — agent runtime selection (`claude` or `codex`)
 - `AFK_DASHBOARD_PORT` (optional, default: 7777) — web dashboard port
 - `AFK_OPENAI_API_KEY` or `OPENAI_API_KEY` (optional) — enables voice message transcription via Whisper API
 

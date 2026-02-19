@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from afk.adapters.claude_code.agent import ClaudeCodeAgent
 from afk.adapters.claude_code.commit_helper import generate_commit_message
+from afk.ports.agent import AgentPort
 from afk.adapters.telegram.config import TelegramConfig
 from afk.adapters.telegram.renderer import EventRenderer
 from afk.adapters.whisper.stt import WhisperAPISTT
@@ -67,11 +68,22 @@ async def main() -> None:
     project_store = ProjectStore(data_dir)
     message_store = MessageStore()
 
+    # Select agent runtime via AFK_AGENT env var (default: claude)
+    agent_type = os.environ.get("AFK_AGENT", "claude").lower()
+    agent_factory: type[AgentPort]
+    if agent_type == "codex":
+        from afk.adapters.codex.agent import CodexAgent
+        agent_factory = CodexAgent
+        logger.info("Agent runtime: OpenAI Codex CLI")
+    else:
+        agent_factory = ClaudeCodeAgent
+        logger.info("Agent runtime: Claude Code CLI")
+
     # Session manager (publishes events via EventBus)
     session_manager = SessionManager(
         messenger, data_dir,
         event_bus=event_bus,
-        agent_factory=ClaudeCodeAgent,
+        agent_factory=agent_factory,
         commit_message_fn=generate_commit_message,
     )
 
