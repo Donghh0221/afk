@@ -5,3 +5,4 @@ afk/data/*.json
 venv/
 .venv/
 .afk-worktrees/
+.DS_Store
