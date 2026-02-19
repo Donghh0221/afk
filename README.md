@@ -18,19 +18,29 @@ The target user is a solo entrepreneur or vibe coder who tells AI what to build,
 
 ## How It Works
 
-```
-Phone / Laptop                          Server (always on)
-│                                       │
-│  Telegram voice or text  ────────────>│  AFK daemon
-│                                       │    ├── Control Plane (Telegram bot)
-│                                       │    ├── Commands API (single entry point)
-│                                       │    ├── Session Manager
-│  <──── streaming responses,           │    │   ├── Session A → Agent (Claude Code)
-│        permission buttons,             │    │   └── Session B → Agent (Claude Code)
-│        completion notifications        │    ├── EventBus (typed events)
-│                                       │    ├── Capabilities (tunnel, ...)
-│                                       │    └── Dashboard (localhost:7777)
-│                                       │
+```mermaid
+graph LR
+    subgraph Client["Phone / Laptop"]
+        Input["Telegram voice or text"]
+    end
+
+    subgraph Server["Server (always on)"]
+        Daemon["AFK daemon"]
+        CP["Control Plane (Telegram bot)"]
+        API["Commands API (single entry point)"]
+        SM["Session Manager"]
+        SesA["Session A → Agent (Claude Code)"]
+        SesB["Session B → Agent (Claude Code)"]
+        EB["EventBus (typed events)"]
+        Cap["Capabilities (tunnel, ...)"]
+        Dash["Dashboard (localhost:7777)"]
+
+        Daemon --- CP & API & SM & EB & Cap & Dash
+        SM --- SesA & SesB
+    end
+
+    Input -->|request| Daemon
+    Daemon -->|"streaming responses,\npermission buttons,\ncompletion notifications"| Client
 ```
 
 1. You send a message (text or voice) in a Telegram forum topic

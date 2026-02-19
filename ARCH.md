@@ -11,68 +11,55 @@
 
 ## System Architecture
 
-```
-📱 Phone         💻 Laptop         🖥️ AFK Server (always on)
-│                │                 │
-│ Telegram       │ Telegram        │ ┌──────────────────────────────────┐
-│                │ + CLI (future)  │ │          AFK Daemon              │
-│                │                 │ │                                  │
-└────────────────┴────────────────┤ │  ┌──────────────────────────┐    │
-                                  │ │  │  ControlPlanePort        │    │
-       Telegram Bot API           │ │  │  ┌────────────────────┐  │    │
-       ───────────────────────────┤ │  │  │ TelegramAdapter    │  │    │
-                                  │ │  │  └────────────────────┘  │    │
-                                  │ │  └──────────┬───────────────┘    │
-                                  │ │             │                    │
-                                  │ │  ┌──────────▼───────────────┐    │
-                                  │ │  │   Orchestrator            │    │
-                                  │ │  │   (messenger → Commands)  │    │
-                                  │ │  └──────────┬───────────────┘    │
-                                  │ │             │                    │
-                                  │ │  ┌──────────▼───────────────┐    │
-                                  │ │  │   Commands API            │    │
-                                  │ │  │   (single entry point)    │    │
-                                  │ │  │                           │    │
-                                  │ │  │  ┌─────────┐ ┌─────────┐ │    │
-                                  │ │  │  │ STTPort │ │ Tunnel  │ │    │
-                                  │ │  │  │(Whisper)│ │Capabilty│ │    │
-                                  │ │  │  └─────────┘ └─────────┘ │    │
-                                  │ │  └──────────┬───────────────┘    │
-                                  │ │             │                    │
-                                  │ │  ┌──────────▼───────────────┐    │
-                                  │ │  │  Session Manager          │    │
-                                  │ │  │  ┌────────┐ ┌────────┐   │    │
-                                  │ │  │  │ Ses A  │ │ Ses B  │   │    │
-                                  │ │  │  └───┬────┘ └───┬────┘   │    │
-                                  │ │  └──────┼──────────┼────────┘    │
-                                  │ │         │          │             │
-                                  │ │  ┌──────▼──┐ ┌────▼─────┐       │
-                                  │ │  │AgentPort│ │AgentPort │       │
-                                  │ │  │(Claude  │ │(Claude   │       │
-                                  │ │  │ Code)   │ │ Code)    │       │
-                                  │ │  └─────────┘ └──────────┘       │
-                                  │ │                                  │
-                                  │ │  EventBus ──► EventRenderer      │
-                                  │ │              (→ Telegram msgs)   │
-                                  │ └──────────────────────────────────┘
+```mermaid
+graph TB
+    Phone["📱 Phone\nTelegram"]
+    Laptop["💻 Laptop\nTelegram + CLI (future)"]
+
+    Phone -->|Telegram Bot API| TA
+    Laptop -->|Telegram Bot API| TA
+
+    subgraph Server["🖥️ AFK Server (always on)"]
+        subgraph Daemon["AFK Daemon"]
+            TA["TelegramAdapter\n(ControlPlanePort)"]
+            Orch["Orchestrator\n(messenger → Commands)"]
+            Cmd["Commands API\n(single entry point)"]
+            STT["STTPort (Whisper)"]
+            Tunnel["TunnelCapability"]
+
+            subgraph SM["Session Manager"]
+                SesA["Session A"]
+                SesB["Session B"]
+            end
+
+            AgentA["AgentPort\n(Claude Code)"]
+            AgentB["AgentPort\n(Claude Code)"]
+            EB["EventBus ──► EventRenderer\n(→ Telegram msgs)"]
+
+            TA --> Orch --> Cmd
+            Cmd --- STT
+            Cmd --- Tunnel
+            Cmd --> SM
+            SesA --> AgentA
+            SesB --> AgentB
+        end
+    end
 ```
 
 ## 3-Layer Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Layer 1: Core (AFK Kernel)                                 │
-│  commands.py, events.py, session_manager.py, git_worktree.py│
-│  Never imports Telegram, Claude, cloudflared                 │
-├─────────────────────────────────────────────────────────────┤
-│  Layer 2: Ports (Abstract Interfaces)                       │
-│  AgentPort, ControlPlanePort, STTPort                       │
-│  Protocol definitions only — no implementations              │
-├─────────────────────────────────────────────────────────────┤
-│  Layer 3: Adapters + Capabilities                           │
-│  ClaudeCodeAgent, TelegramAdapter, WhisperAPISTT            │
-│  TunnelCapability, EventRenderer                            │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+block-beta
+    columns 1
+    block:L1["Layer 1: Core (AFK Kernel)"]
+        A["commands.py, events.py, session_manager.py, git_worktree.py\nNever imports Telegram, Claude, cloudflared"]
+    end
+    block:L2["Layer 2: Ports (Abstract Interfaces)"]
+        B["AgentPort, ControlPlanePort, STTPort\nProtocol definitions only — no implementations"]
+    end
+    block:L3["Layer 3: Adapters + Capabilities"]
+        C["ClaudeCodeAgent, TelegramAdapter, WhisperAPISTT\nTunnelCapability, EventRenderer"]
+    end
 ```
 
 **Boundary rules:**
@@ -358,54 +345,95 @@ Registered as a cleanup callback with SessionManager — tunnels are automatical
 
 ### Text Prompt
 
-```
-User text message
-  → TelegramAdapter → Orchestrator._handle_text(channel_id, text)
-  → Commands.cmd_send_message(channel_id, text)
-  → SessionManager.send_to_session(channel_id, text)
-  → Session.agent.send_message(text)
-  → agent read_responses() → SessionManager._publish_agent_event()
-  → EventBus.publish(AgentAssistantEvent | AgentResultEvent)
-  → EventRenderer → messenger.send_message(channel_id, ...)
+```mermaid
+sequenceDiagram
+    participant User
+    participant TA as TelegramAdapter
+    participant Orch as Orchestrator
+    participant Cmd as Commands
+    participant SM as SessionManager
+    participant Agent
+    participant EB as EventBus
+    participant ER as EventRenderer
+
+    User->>TA: Text message
+    TA->>Orch: _handle_text(channel_id, text)
+    Orch->>Cmd: cmd_send_message(channel_id, text)
+    Cmd->>SM: send_to_session(channel_id, text)
+    SM->>Agent: send_message(text)
+    Agent-->>SM: read_responses()
+    SM->>EB: publish(AgentAssistantEvent | AgentResultEvent)
+    EB->>ER: event
+    ER->>TA: messenger.send_message(channel_id, ...)
 ```
 
 ### Voice Prompt
 
-```
-User voice message
-  → TelegramAdapter → Orchestrator._handle_voice(channel_id, file_id)
-  → messenger.download_voice(file_id) → audio file
-  → Commands.cmd_send_voice(channel_id, audio_path)
-  → STTPort.transcribe(audio_path) → text
-  → SessionManager.send_to_session(channel_id, text)
-  → (same event flow as text from here)
+```mermaid
+sequenceDiagram
+    participant User
+    participant TA as TelegramAdapter
+    participant Orch as Orchestrator
+    participant Cmd as Commands
+    participant STT as STTPort
+    participant SM as SessionManager
+
+    User->>TA: Voice message
+    TA->>Orch: _handle_voice(channel_id, file_id)
+    Orch->>TA: download_voice(file_id)
+    TA-->>Orch: audio file
+    Orch->>Cmd: cmd_send_voice(channel_id, audio_path)
+    Cmd->>STT: transcribe(audio_path)
+    STT-->>Cmd: text
+    Cmd->>SM: send_to_session(channel_id, text)
+    Note over SM: Same event flow as text from here
 ```
 
 ### Permission Handling
 
-```
-Permission request detected in agent read_responses()
-  → EventBus.publish(AgentAssistantEvent with tool_use block)
-  → EventRenderer → messenger.send_permission_request(...)
-  → User presses Allow/Deny button
-  → Orchestrator._handle_permission_response(channel_id, request_id, choice)
-  → Commands.cmd_permission_response(...)
-  → SessionManager.send_permission_response(...)
-  → Session.agent.send_permission_response(request_id, allowed)
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant SM as SessionManager
+    participant EB as EventBus
+    participant ER as EventRenderer
+    participant TA as TelegramAdapter
+    participant User
+    participant Orch as Orchestrator
+    participant Cmd as Commands
+
+    Agent-->>SM: read_responses() (permission request)
+    SM->>EB: publish(AgentAssistantEvent with tool_use)
+    EB->>ER: event
+    ER->>TA: send_permission_request(...)
+    TA->>User: Allow/Deny buttons
+    User->>TA: Button press
+    TA->>Orch: _handle_permission_response(channel_id, request_id, choice)
+    Orch->>Cmd: cmd_permission_response(...)
+    Cmd->>SM: send_permission_response(...)
+    SM->>Agent: send_permission_response(request_id, allowed)
 ```
 
 ### Session Complete
 
-```
-/complete command
-  → Orchestrator → Commands.cmd_complete_session(channel_id)
-  → SessionManager.complete_session():
-      1. Run cleanup callbacks (stops tunnel, etc.)
-      2. Stop agent process
-      3. commit_worktree_changes(commit_message_fn=generate_commit_message)
-      4. merge_branch_to_main (rebase + ff-merge)
-      5. delete_branch
-      6. close_session_channel
+```mermaid
+sequenceDiagram
+    participant User
+    participant Orch as Orchestrator
+    participant Cmd as Commands
+    participant SM as SessionManager
+    participant Agent
+    participant Git
+
+    User->>Orch: /complete
+    Orch->>Cmd: cmd_complete_session(channel_id)
+    Cmd->>SM: complete_session()
+    SM->>SM: 1. Run cleanup callbacks (stop tunnel, etc.)
+    SM->>Agent: 2. Stop agent process
+    SM->>Git: 3. commit_worktree_changes(commit_message_fn)
+    SM->>Git: 4. merge_branch_to_main (rebase + ff-merge)
+    SM->>Git: 5. delete_branch
+    SM->>SM: 6. close_session_channel
 ```
 
 ## Wiring (`main.py`)

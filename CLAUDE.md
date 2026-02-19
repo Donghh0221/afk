@@ -31,13 +31,23 @@ AFK ("Away From Keyboard") is a Python daemon that serves as a remote control pl
 
 ## Data Flow
 
-```
-Text message  → TelegramAdapter → Orchestrator → Commands → SessionManager → Agent (stdin)
-Voice message → TelegramAdapter → Orchestrator → Commands → STT (transcribe) → SessionManager → Agent (stdin)
+```mermaid
+graph LR
+    subgraph Input
+        Text["Text message"]
+        Voice["Voice message"]
+    end
 
-Agent (stdout) → SessionManager._read_loop → EventBus.publish(typed events)
-  → EventRenderer → messenger.send_message (to Telegram)
-  → MessageStore (for dashboard)
+    Text --> TA["TelegramAdapter"]
+    Voice --> TA
+    TA --> Orch["Orchestrator"] --> Cmd["Commands"]
+    Cmd --> SM["SessionManager"] --> Agent["Agent (stdin)"]
+    Cmd -.->|voice only| STT["STT (transcribe)"] -.-> SM
+
+    Agent2["Agent (stdout)"] --> RL["SessionManager._read_loop"]
+    RL --> EB["EventBus.publish(typed events)"]
+    EB --> ER["EventRenderer → messenger.send_message"]
+    EB --> MS["MessageStore (for dashboard)"]
 ```
 
 ## Telegram Commands

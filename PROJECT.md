@@ -26,15 +26,21 @@ For these people, the terminal is a bottleneck. AFK removes that bottleneck.
 
 ## Deployment Architecture
 
-```
-📱 Phone (on the go)     💻 Laptop (home/cafe)       🖥️ Server (always ON)
-│                        │                           │
-│ Telegram voice         │ Telegram text              │ AFK daemon
-│ → commands, approvals  │ + terminal client (future)  │ Agent ×N (Claude Code)
-│                        │                           │ Session state preserved
-│                        │                           │
-└────────────────────────┴───────────────────────────┘
-         Seamlessly connected via Telegram multi-device
+```mermaid
+graph LR
+    subgraph Clients[" "]
+        Phone["📱 Phone (on the go)\nTelegram voice\ncommands, approvals"]
+        Laptop["💻 Laptop (home/cafe)\nTelegram text\n+ terminal client (future)"]
+    end
+
+    subgraph Server["🖥️ Server (always ON)"]
+        Daemon["AFK daemon"]
+        Agents["Agent ×N (Claude Code)"]
+        State["Session state preserved"]
+    end
+
+    Phone ---|Telegram multi-device| Server
+    Laptop ---|Telegram multi-device| Server
 ```
 
 The always-on machine serves as the server. Phone/laptop act as clients only.
