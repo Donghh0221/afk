@@ -18,7 +18,7 @@ from afk.capabilities.tunnel.tunnel import TunnelCapability
 from afk.core.commands import Commands
 from afk.core.events import EventBus
 from afk.dashboard.message_store import MessageStore
-from afk.dashboard.server import DashboardServer
+from afk.web.server import WebControlPlane
 from afk.adapters.telegram.adapter import TelegramAdapter
 from afk.core.session_manager import SessionManager
 from afk.core.orchestrator import Orchestrator
@@ -119,9 +119,9 @@ async def main() -> None:
     # Orchestrator wires messenger callbacks to Commands
     _orchestrator = Orchestrator(messenger, commands)
 
-    # Dashboard web server
-    dashboard = DashboardServer(
-        session_manager, message_store, LOG_FILE, port=dashboard_port,
+    # Web control plane (replaces the old read-only dashboard)
+    web_cp = WebControlPlane(
+        commands, event_bus, message_store, LOG_FILE, port=dashboard_port,
     )
 
     # Handle shutdown signals
@@ -135,8 +135,8 @@ async def main() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, handle_signal)
 
-    # Start Telegram bot + dashboard
-    await dashboard.start()
+    # Start Telegram bot + web control plane
+    await web_cp.start()
     await messenger.start()
     logger.info("AFK is running. Press Ctrl+C to stop.")
 
@@ -162,7 +162,7 @@ async def main() -> None:
     renderer.stop()
     await session_manager.suspend_all_sessions()
     await messenger.stop()
-    await dashboard.stop()
+    await web_cp.stop()
     logger.info("AFK stopped.")
 
 

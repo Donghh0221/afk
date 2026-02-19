@@ -43,6 +43,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_web_channel(channel_id: str) -> bool:
+    """Return True for web-control-plane channels (not managed by Telegram)."""
+    return channel_id.startswith("web:")
+
+
 class EventRenderer:
     """Subscribes to EventBus events and renders them to a ControlPlanePort.
 
@@ -123,9 +128,10 @@ class EventRenderer:
                     meta["duration"] = duration_s
                 self._ms.append(ev.channel_id, "result", f"Done{info}", meta=meta)
 
-                await self._messenger.send_message(
-                    ev.channel_id, f"✅ Done{info}"
-                )
+                if not _is_web_channel(ev.channel_id):
+                    await self._messenger.send_message(
+                        ev.channel_id, f"✅ Done{info}"
+                    )
         except asyncio.CancelledError:
             pass
 
@@ -133,6 +139,8 @@ class EventRenderer:
         """Render AgentStoppedEvent — agent process stopped unexpectedly."""
         try:
             async for ev in self._bus.iter_events(AgentStoppedEvent):
+                if _is_web_channel(ev.channel_id):
+                    continue
                 try:
                     await self._messenger.send_message(
                         ev.channel_id,
@@ -159,10 +167,12 @@ class EventRenderer:
                     self._ms.append(
                         ev.channel_id, "permission",
                         f"⚠️ Permission: {ev.tool_name} — {tool_args}",
+                        meta={"request_id": ev.request_id},
                     )
-                    await self._messenger.send_permission_request(
-                        ev.channel_id, ev.tool_name, tool_args, ev.request_id,
-                    )
+                    if not _is_web_channel(ev.channel_id):
+                        await self._messenger.send_permission_request(
+                            ev.channel_id, ev.tool_name, tool_args, ev.request_id,
+                        )
                 except Exception:
                     logger.exception(
                         "Error rendering permission request for %s",
@@ -177,9 +187,10 @@ class EventRenderer:
             async for ev in self._bus.iter_events(AgentInputRequestEvent):
                 try:
                     self._ms.append(ev.channel_id, "system", "Ready for input")
-                    await self._messenger.send_message(
-                        ev.channel_id, "💬 Ready for your input", silent=True,
-                    )
+                    if not _is_web_channel(ev.channel_id):
+                        await self._messenger.send_message(
+                            ev.channel_id, "💬 Ready for your input", silent=True,
+                        )
                 except Exception:
                     logger.exception(
                         "Error rendering input request for %s",
@@ -237,7 +248,10 @@ class EventRenderer:
                     result_lines.append(result_text)
 
         silent = (behavior == _SILENT)
-        should_send = behavior not in (_SKIP, _STORE_ONLY)
+        should_send = (
+            behavior not in (_SKIP, _STORE_ONLY)
+            and not _is_web_channel(ev.channel_id)
+        )
 
         if texts:
             text_body = "\n".join(texts)

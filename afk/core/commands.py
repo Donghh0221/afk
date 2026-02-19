@@ -109,9 +109,14 @@ class Commands:
     # -- Session commands --------------------------------------------------
 
     async def cmd_new_session(
-        self, project_name: str, verbose: bool = False
+        self, project_name: str, verbose: bool = False,
+        channel_id: str | None = None,
     ) -> Session:
-        """Create a new session. Raises RuntimeError on failure."""
+        """Create a new session. Raises RuntimeError on failure.
+
+        *channel_id* — if provided, skip messenger channel creation
+        (used by the web control plane).
+        """
         project = self._ps.get(project_name)
         if not project:
             raise ValueError(
@@ -119,7 +124,9 @@ class Commands:
                 "Check /project list for available projects."
             )
 
-        session = await self._sm.create_session(project_name, project["path"])
+        session = await self._sm.create_session(
+            project_name, project["path"], channel_id=channel_id,
+        )
         session.verbose = verbose
         return session
 

@@ -51,6 +51,7 @@ class Session:
     agent_session_id: str | None = None
     state: str = "idle"  # idle | running | waiting_permission | stopped
     verbose: bool = False
+    managed_channel: bool = True  # False for web channels (no Telegram topic)
     created_at: float = field(default_factory=time.time)
     _response_task: asyncio.Task | None = field(default=None, repr=False)
     _session_logger: SessionLogger | None = field(default=None, repr=False)
@@ -98,9 +99,14 @@ class SessionManager:
         return self._agent_factory()
 
     async def create_session(
-        self, project_name: str, project_path: str
+        self, project_name: str, project_path: str,
+        channel_id: str | None = None,
     ) -> Session:
-        """Create new session: git worktree + forum topic + agent process."""
+        """Create new session: git worktree + forum topic + agent process.
+
+        If *channel_id* is provided the messenger channel creation is skipped
+        (used by the web control plane which manages its own channel IDs).
+        """
         # Validate git repository
         if not await is_git_repo(project_path):
             raise RuntimeError(
@@ -139,8 +145,11 @@ class SessionManager:
             "Session created: project=%s worktree=%s", project_name, worktree_path,
         )
 
-        # Create forum topic (only after git succeeds — no orphan topics)
-        channel_id = await self._messenger.create_session_channel(session_name)
+        # Create channel — skip messenger call when a pre-assigned channel_id
+        # is provided (web control plane supplies its own IDs).
+        managed_channel = channel_id is None
+        if managed_channel:
+            channel_id = await self._messenger.create_session_channel(session_name)
 
         # Start agent process in the worktree directory
         agent = self._create_agent()
@@ -153,6 +162,7 @@ class SessionManager:
             worktree_path=worktree_path,
             channel_id=channel_id,
             agent=agent,
+            managed_channel=managed_channel,
             _session_logger=session_logger,
         )
 
@@ -200,11 +210,12 @@ class SessionManager:
 
         del self._sessions[channel_id]
         self._save_sessions()
-        # Delete the forum topic
-        try:
-            await self._messenger.close_session_channel(channel_id)
-        except Exception:
-            logger.warning("Failed to delete topic for %s", session.name)
+        # Delete the forum topic (only for messenger-managed channels)
+        if session.managed_channel:
+            try:
+                await self._messenger.close_session_channel(channel_id)
+            except Exception:
+                logger.warning("Failed to delete topic for %s", session.name)
         logger.info("Stopped session: %s", session.name)
         return True
 
@@ -274,11 +285,12 @@ class SessionManager:
         del self._sessions[channel_id]
         self._save_sessions()
 
-        # 8. Delete the forum topic
-        try:
-            await self._messenger.close_session_channel(channel_id)
-        except Exception:
-            logger.warning("Failed to delete topic for %s", session.name)
+        # 8. Delete the forum topic (only for messenger-managed channels)
+        if session.managed_channel:
+            try:
+                await self._messenger.close_session_channel(channel_id)
+            except Exception:
+                logger.warning("Failed to delete topic for %s", session.name)
 
         logger.info("Completed session: %s (merged into main)", session.name)
         return True, f"Session '{session.name}' completed. Branch merged into main."
@@ -470,6 +482,7 @@ class SessionManager:
             project_path = info.get("project_path", "")
             agent_session_id = info.get("agent_session_id")
             verbose = info.get("verbose", False)
+            managed_channel = info.get("managed_channel", True)
             created_at = info.get("created_at", time.time())
 
             if not Path(worktree_path).is_dir():
@@ -516,6 +529,7 @@ class SessionManager:
                     agent=agent,
                     agent_session_id=agent_session_id,
                     verbose=verbose,
+                    managed_channel=managed_channel,
                     created_at=created_at,
                     _session_logger=session_logger,
                 )
@@ -590,6 +604,7 @@ class SessionManager:
                 "agent_session_id": s.agent.session_id or s.agent_session_id,
                 "state": s.state,
                 "verbose": s.verbose,
+                "managed_channel": s.managed_channel,
                 "created_at": s.created_at,
             }
         path = self._data_dir / "sessions.json"

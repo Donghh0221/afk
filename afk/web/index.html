@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AFK Control Plane</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --bg-surface: #161b22;
+  --bg-hover: #1c2128;
+  --bg-input: #0d1117;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-muted: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --purple: #bc8cff;
+  --mono: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+header h1 { font-size: 14px; font-weight: 600; }
+#sse-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--red);
+  color: #fff;
+}
+#sse-status.connected { background: var(--green); }
+
+/* Layout */
+.layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 260px;
+  min-width: 200px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+}
+.sidebar-section {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-section h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sidebar-section h2 button {
+  font-size: 11px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--accent);
+  padding: 1px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--mono);
+}
+.sidebar-section h2 button:hover { background: var(--bg-hover); }
+
+.session-list, .project-list {
+  list-style: none;
+  overflow-y: auto;
+}
+.session-item, .project-item {
+  padding: 6px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  word-break: break-all;
+}
+.session-item:hover, .project-item:hover { background: var(--bg-hover); }
+.session-item.active { background: var(--accent); color: #000; }
+.state-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.state-dot.running { background: var(--green); }
+.state-dot.idle { background: var(--yellow); }
+.state-dot.waiting_permission { background: var(--purple); }
+.state-dot.stopped { background: var(--red); }
+.state-dot.suspended { background: var(--text-muted); }
+
+/* Main area */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Top bar (session info + actions) */
+.session-bar {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-surface);
+  min-height: 38px;
+}
+.session-bar .name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.session-bar .actions { display: flex; gap: 6px; }
+.session-bar .actions button, .btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.btn:hover, .session-bar .actions button:hover { background: var(--bg-hover); }
+.btn-danger { border-color: var(--red); color: var(--red); }
+.btn-primary { border-color: var(--accent); color: var(--accent); }
+.btn-green { border-color: var(--green); color: var(--green); }
+
+/* Messages */
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+.msg {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.msg .role {
+  font-size: 10px;
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-right: 6px;
+}
+.msg.user { background: #1a2332; border-left: 3px solid var(--accent); }
+.msg.user .role { color: var(--accent); }
+.msg.assistant { background: var(--bg-surface); border-left: 3px solid var(--green); }
+.msg.assistant .role { color: var(--green); }
+.msg.tool { background: var(--bg-surface); border-left: 3px solid var(--text-muted); }
+.msg.tool .role { color: var(--text-muted); }
+.msg.system { background: var(--bg-surface); border-left: 3px solid var(--yellow); }
+.msg.system .role { color: var(--yellow); }
+.msg.result { background: #122117; border-left: 3px solid var(--green); }
+.msg.result .role { color: var(--green); }
+.msg.permission {
+  background: #221a2e;
+  border-left: 3px solid var(--purple);
+}
+.msg.permission .role { color: var(--purple); }
+.permission-actions { margin-top: 6px; display: flex; gap: 6px; }
+
+/* Input */
+.input-area {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  display: flex;
+  gap: 8px;
+}
+.input-area input {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text);
+  outline: none;
+}
+.input-area input:focus { border-color: var(--accent); }
+.input-area button {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #000;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* Empty state */
+.empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* Modal */
+.modal-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  min-width: 320px;
+}
+.modal h3 { margin-bottom: 12px; font-size: 14px; }
+.modal label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted); }
+.modal select, .modal input[type="text"] {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.modal .modal-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+}
+
+/* Add project form */
+.add-project-form {
+  display: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.add-project-form.open { display: block; }
+.add-project-form input {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.add-project-form .form-actions {
+  display: flex; gap: 4px; justify-content: flex-end;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AFK Control Plane</h1>
+  <span id="sse-status">disconnected</span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <h2>Projects <button onclick="toggleAddProject()">+</button></h2>
+      <div class="add-project-form" id="add-project-form">
+        <input id="proj-name" type="text" placeholder="name" />
+        <input id="proj-path" type="text" placeholder="/absolute/path" />
+        <div class="form-actions">
+          <button class="btn" onclick="toggleAddProject()">Cancel</button>
+          <button class="btn btn-primary" onclick="addProject()">Add</button>
+        </div>
+      </div>
+      <ul class="project-list" id="project-list"></ul>
+    </div>
+    <div class="sidebar-section" style="flex:1;overflow-y:auto;">
+      <h2>Sessions <button onclick="openNewSession()">+ New</button></h2>
+      <ul class="session-list" id="session-list"></ul>
+    </div>
+  </aside>
+
+  <div class="main" id="main-area">
+    <div class="empty-state" id="empty-state">Select or create a session</div>
+  </div>
+</div>
+
+<!-- New Session Modal -->
+<div class="modal-overlay" id="new-session-modal">
+  <div class="modal">
+    <h3>New Session</h3>
+    <label>Project</label>
+    <select id="modal-project"></select>
+    <label><input type="checkbox" id="modal-verbose" /> Verbose mode</label>
+    <div style="height:12px"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="createSession()">Create</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let sessions = [];
+let projects = {};
+let activeChannelId = null;
+let lastMessageTs = {};   // channel_id -> last timestamp
+let pendingPermissions = {};  // channel_id -> Set of request_ids
+let evtSource = null;
+
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+async function fetchProjects() {
+  projects = await api("GET", "/api/projects");
+  renderProjects();
+}
+
+function renderProjects() {
+  const el = document.getElementById("project-list");
+  const names = Object.keys(projects);
+  if (!names.length) {
+    el.innerHTML = '<li class="project-item" style="color:var(--text-muted)">No projects</li>';
+    return;
+  }
+  el.innerHTML = names.map(n =>
+    `<li class="project-item" title="${projects[n].path}">${n}</li>`
+  ).join("");
+}
+
+function toggleAddProject() {
+  document.getElementById("add-project-form").classList.toggle("open");
+}
+
+async function addProject() {
+  const name = document.getElementById("proj-name").value.trim();
+  const path = document.getElementById("proj-path").value.trim();
+  if (!name || !path) return;
+  await api("POST", "/api/projects", { name, path });
+  document.getElementById("proj-name").value = "";
+  document.getElementById("proj-path").value = "";
+  toggleAddProject();
+  fetchProjects();
+}
+
+// ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+async function fetchSessions() {
+  sessions = await api("GET", "/api/sessions");
+  renderSessions();
+}
+
+function renderSessions() {
+  const el = document.getElementById("session-list");
+  if (!sessions.length) {
+    el.innerHTML = '<li class="session-item" style="color:var(--text-muted)">No sessions</li>';
+    return;
+  }
+  el.innerHTML = sessions.map(s => {
+    const cls = s.channel_id === activeChannelId ? " active" : "";
+    return `<li class="session-item${cls}" onclick="selectSession('${s.channel_id}')">
+      <span class="state-dot ${s.state}"></span>
+      <span>${s.name}</span>
+    </li>`;
+  }).join("");
+}
+
+function selectSession(channelId) {
+  activeChannelId = channelId;
+  renderSessions();
+  renderSessionView();
+  loadMessages(channelId);
+}
+
+function renderSessionView() {
+  const main = document.getElementById("main-area");
+  const session = sessions.find(s => s.channel_id === activeChannelId);
+  if (!session) {
+    main.innerHTML = '<div class="empty-state" id="empty-state">Select or create a session</div>';
+    return;
+  }
+  main.innerHTML = `
+    <div class="session-bar">
+      <span class="name">${session.name} [${session.state}]</span>
+      <div class="actions">
+        <button class="btn btn-green" onclick="completeSession()">Complete</button>
+        <button class="btn btn-danger" onclick="stopSession()">Stop</button>
+      </div>
+    </div>
+    <div class="messages" id="messages"></div>
+    <div class="input-area">
+      <input id="msg-input" type="text" placeholder="Type a message..."
+             onkeydown="if(event.key==='Enter')sendMessage()" />
+      <button onclick="sendMessage()">Send</button>
+    </div>
+  `;
+}
+
+async function loadMessages(channelId) {
+  const data = await api("GET", `/api/sessions/${encodeURIComponent(channelId)}/messages`);
+  const el = document.getElementById("messages");
+  if (!el) return;
+  el.innerHTML = "";
+  pendingPermissions[channelId] = new Set();
+  data.forEach(m => appendMessage(channelId, m));
+  el.scrollTop = el.scrollHeight;
+}
+
+function appendMessage(channelId, m) {
+  if (channelId !== activeChannelId) return;
+  const el = document.getElementById("messages");
+  if (!el) return;
+
+  // Track last timestamp for polling fallback
+  lastMessageTs[channelId] = Math.max(lastMessageTs[channelId] || 0, m.timestamp);
+
+  const div = document.createElement("div");
+  div.className = `msg ${m.role}`;
+
+  let content = `<span class="role">${m.role}</span>${escapeHtml(m.text)}`;
+
+  // Permission actions
+  if (m.role === "permission" && m.meta && m.meta.request_id) {
+    const rid = m.meta.request_id;
+    if (!pendingPermissions[channelId]) pendingPermissions[channelId] = new Set();
+    if (!pendingPermissions[channelId].has(rid)) {
+      pendingPermissions[channelId].add(rid);
+      content += `
+        <div class="permission-actions" id="perm-${rid}">
+          <button class="btn btn-green" onclick="respondPermission('${rid}', true)">Allow</button>
+          <button class="btn btn-danger" onclick="respondPermission('${rid}', false)">Deny</button>
+        </div>`;
+    }
+  }
+
+  div.innerHTML = content;
+  el.appendChild(div);
+
+  // Auto-scroll if near bottom
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+async function sendMessage() {
+  const input = document.getElementById("msg-input");
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text || !activeChannelId) return;
+  input.value = "";
+
+  await api("POST", `/api/sessions/${encodeURIComponent(activeChannelId)}/message`, { text });
+}
+
+async function stopSession() {
+  if (!activeChannelId) return;
+  if (!confirm("Stop this session?")) return;
+  await api("POST", `/api/sessions/${encodeURIComponent(activeChannelId)}/stop`);
+  activeChannelId = null;
+  fetchSessions();
+  document.getElementById("main-area").innerHTML =
+    '<div class="empty-state">Select or create a session</div>';
+}
+
+async function completeSession() {
+  if (!activeChannelId) return;
+  if (!confirm("Complete this session? (merge into main)")) return;
+  const result = await api("POST", `/api/sessions/${encodeURIComponent(activeChannelId)}/complete`);
+  if (result.ok) {
+    activeChannelId = null;
+    fetchSessions();
+    document.getElementById("main-area").innerHTML =
+      '<div class="empty-state">Select or create a session</div>';
+  } else {
+    alert(result.message || "Complete failed");
+  }
+}
+
+async function respondPermission(requestId, allowed) {
+  if (!activeChannelId) return;
+  await api("POST", `/api/sessions/${encodeURIComponent(activeChannelId)}/permission`, {
+    request_id: requestId,
+    allowed,
+  });
+  const el = document.getElementById(`perm-${requestId}`);
+  if (el) el.innerHTML = `<span style="color:${allowed ? 'var(--green)' : 'var(--red)'}">
+    ${allowed ? 'Allowed' : 'Denied'}</span>`;
+}
+
+// ---------------------------------------------------------------------------
+// New session modal
+// ---------------------------------------------------------------------------
+function openNewSession() {
+  const select = document.getElementById("modal-project");
+  const names = Object.keys(projects);
+  if (!names.length) {
+    alert("No projects registered. Add a project first.");
+    return;
+  }
+  select.innerHTML = names.map(n => `<option value="${n}">${n}</option>`).join("");
+  document.getElementById("new-session-modal").classList.add("open");
+}
+
+function closeModal() {
+  document.getElementById("new-session-modal").classList.remove("open");
+}
+
+async function createSession() {
+  const project = document.getElementById("modal-project").value;
+  const verbose = document.getElementById("modal-verbose").checked;
+  closeModal();
+  const result = await api("POST", "/api/sessions", { project, verbose });
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+  await fetchSessions();
+  selectSession(result.channel_id);
+}
+
+// ---------------------------------------------------------------------------
+// SSE
+// ---------------------------------------------------------------------------
+function connectSSE() {
+  if (evtSource) evtSource.close();
+  evtSource = new EventSource("/api/events");
+
+  evtSource.onopen = () => {
+    document.getElementById("sse-status").textContent = "connected";
+    document.getElementById("sse-status").classList.add("connected");
+  };
+
+  evtSource.onerror = () => {
+    document.getElementById("sse-status").textContent = "disconnected";
+    document.getElementById("sse-status").classList.remove("connected");
+  };
+
+  evtSource.onmessage = (e) => {
+    try {
+      const ev = JSON.parse(e.data);
+      handleSSEEvent(ev);
+    } catch {}
+  };
+}
+
+function handleSSEEvent(ev) {
+  const channelId = ev.channel_id;
+
+  // Refresh session list on state-changing events
+  if (["AgentStoppedEvent", "AgentSystemEvent", "AgentResultEvent",
+       "AgentInputRequestEvent"].includes(ev.type)) {
+    fetchSessions();
+  }
+
+  // Only render messages for the active session
+  if (channelId !== activeChannelId) return;
+
+  const ts = Date.now() / 1000;
+
+  if (ev.type === "AgentAssistantEvent") {
+    const blocks = ev.content_blocks;
+    if (typeof blocks === "string") {
+      appendMessage(channelId, { timestamp: ts, role: "assistant", text: blocks });
+    } else if (Array.isArray(blocks)) {
+      const texts = [], tools = [], results = [];
+      blocks.forEach(b => {
+        if (!b || typeof b !== "object") return;
+        if (b.type === "text" && b.text) texts.push(b.text);
+        else if (b.type === "tool_use") tools.push(`[${b.name}] ${summarizeArgs(b.input)}`);
+        else if (b.type === "tool_result") results.push(summarizeResult(b));
+      });
+      if (texts.length) appendMessage(channelId, { timestamp: ts, role: "assistant", text: texts.join("\n") });
+      if (tools.length) appendMessage(channelId, { timestamp: ts, role: "tool", text: tools.join("\n") });
+      if (results.length) appendMessage(channelId, { timestamp: ts, role: "tool", text: results.join("\n") });
+    }
+  } else if (ev.type === "AgentResultEvent") {
+    const cost = ev.cost_usd ? `$${ev.cost_usd.toFixed(4)}` : "";
+    const dur = ev.duration_ms ? `${(ev.duration_ms / 1000).toFixed(1)}s` : "";
+    const info = [cost, dur].filter(Boolean).join(", ");
+    appendMessage(channelId, { timestamp: ts, role: "result", text: `Done${info ? ` (${info})` : ""}` });
+  } else if (ev.type === "AgentPermissionRequestEvent") {
+    const args = summarizeArgs(ev.tool_input);
+    appendMessage(channelId, {
+      timestamp: ts, role: "permission",
+      text: `Permission: ${ev.tool_name} - ${args}`,
+      meta: { request_id: ev.request_id },
+    });
+  } else if (ev.type === "AgentInputRequestEvent") {
+    appendMessage(channelId, { timestamp: ts, role: "system", text: "Ready for input" });
+  } else if (ev.type === "AgentStoppedEvent") {
+    appendMessage(channelId, { timestamp: ts, role: "system", text: `Session ended: ${ev.session_name}` });
+  } else if (ev.type === "AgentSystemEvent") {
+    appendMessage(channelId, {
+      timestamp: ts, role: "system",
+      text: ev.agent_session_id ? `Session ready (id=${ev.agent_session_id})` : "System message",
+    });
+  }
+}
+
+function summarizeArgs(input) {
+  if (!input) return "";
+  if (typeof input === "string") return input.slice(0, 200);
+  if (input.command) return input.command;
+  if (input.content) return input.content.slice(0, 200);
+  if (input.file_path) return input.file_path;
+  return JSON.stringify(input).slice(0, 200);
+}
+
+function summarizeResult(block) {
+  const prefix = block.is_error ? "Error" : "Result";
+  let text = "";
+  const c = block.content;
+  if (typeof c === "string") text = c;
+  else if (Array.isArray(c)) text = c.map(i => (typeof i === "object" && i.text) || String(i)).join("\n");
+  else text = String(c || "");
+  if (text.length > 300) text = text.slice(0, 300) + "...";
+  return `[${prefix}] ${text}`;
+}
+
+function escapeHtml(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+fetchProjects();
+fetchSessions();
+connectSSE();
+
+// Periodic refresh (fallback)
+setInterval(fetchSessions, 5000);
+</script>
+</body>
+</html>
