@@ -19,7 +19,7 @@ from afk.core.events import (
     EventBus,
     EventLevel,
 )
-from afk.dashboard.message_store import MessageStore
+from afk.storage.message_store import MessageStore
 
 # ---------------------------------------------------------------------------
 # Level-to-behavior mapping for Telegram control plane

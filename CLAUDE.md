@@ -10,7 +10,7 @@ AFK ("Away From Keyboard") is a Python daemon that serves as a remote control pl
 
 - **Python 3.11+** with **asyncio** (event-driven)
 - **python-telegram-bot[ext]>=21.0** — Telegram Bot API (asyncio native)
-- **aiohttp>=3.9** — web dashboard server
+- **aiohttp>=3.9** — web control plane server
 - **python-dotenv>=1.0** — environment variable loading
 - **openai>=1.0** — Whisper API for voice transcription (optional, only if API key is set)
 - **Claude Code CLI** — headless mode via `--input-format stream-json --output-format stream-json`
@@ -47,7 +47,7 @@ graph LR
     Agent2["Agent (stdout)"] --> RL["SessionManager._read_loop"]
     RL --> EB["EventBus.publish(typed events)"]
     EB --> ER["EventRenderer → messenger.send_message"]
-    EB --> MS["MessageStore (for dashboard)"]
+    EB --> MS["MessageStore"]
 ```
 
 ## Telegram Commands
@@ -66,7 +66,7 @@ graph LR
 - `AFK_TELEGRAM_BOT_TOKEN` (required) — Telegram bot token
 - `AFK_TELEGRAM_GROUP_ID` (required) — Telegram group/supergroup ID
 - `AFK_AGENT` (optional, default: `claude`) — agent runtime selection (`claude` or `codex`)
-- `AFK_DASHBOARD_PORT` (optional, default: 7777) — web dashboard port
+- `AFK_DASHBOARD_PORT` (optional, default: 7777) — web control plane port
 - `AFK_OPENAI_API_KEY` or `OPENAI_API_KEY` (optional) — enables voice message transcription via Whisper API
 
 ## Development Notes

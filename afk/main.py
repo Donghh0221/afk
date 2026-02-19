@@ -17,8 +17,8 @@ from afk.adapters.whisper.stt import WhisperAPISTT
 from afk.capabilities.tunnel.tunnel import TunnelCapability
 from afk.core.commands import Commands
 from afk.core.events import EventBus
-from afk.dashboard.message_store import MessageStore
-from afk.web.server import WebControlPlane
+from afk.storage.message_store import MessageStore
+from afk.adapters.web.server import WebControlPlane
 from afk.adapters.telegram.adapter import TelegramAdapter
 from afk.core.session_manager import SessionManager
 from afk.core.orchestrator import Orchestrator
@@ -56,7 +56,7 @@ async def main() -> None:
     )
 
     data_dir = Path(__file__).parent / "data"
-    dashboard_port = int(os.environ.get("AFK_DASHBOARD_PORT", "7777"))
+    web_port = int(os.environ.get("AFK_DASHBOARD_PORT", "7777"))
     openai_api_key = (
         os.environ.get("AFK_OPENAI_API_KEY", "")
         or os.environ.get("OPENAI_API_KEY", "")
@@ -119,9 +119,9 @@ async def main() -> None:
     # Orchestrator wires messenger callbacks to Commands
     _orchestrator = Orchestrator(messenger, commands)
 
-    # Web control plane (replaces the old read-only dashboard)
+    # Web control plane
     web_cp = WebControlPlane(
-        commands, event_bus, message_store, LOG_FILE, port=dashboard_port,
+        commands, event_bus, message_store, LOG_FILE, port=web_port,
     )
 
     # Handle shutdown signals

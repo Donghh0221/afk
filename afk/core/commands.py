@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from afk.core.session_manager import SessionManager, Session
-from afk.dashboard.message_store import MessageStore
+from afk.storage.message_store import MessageStore
 from afk.storage.project_store import ProjectStore
 
 if TYPE_CHECKING:

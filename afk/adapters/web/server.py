@@ -26,7 +26,7 @@ from afk.core.events import (
 
 if TYPE_CHECKING:
     from afk.core.commands import Commands
-    from afk.dashboard.message_store import MessageStore
+    from afk.storage.message_store import MessageStore
 
 logger = logging.getLogger(__name__)
 

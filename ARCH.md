@@ -95,24 +95,18 @@ afk/
 │   ├── telegram/
 │   │   ├── config.py                # TelegramConfig (bot_token, group_id)
 │   │   └── renderer.py              # EventRenderer: EventBus events → Telegram messages
-│   └── whisper/
-│       └── stt.py                   # WhisperAPISTT (implements STTPort)
+│   ├── whisper/
+│   │   └── stt.py                   # WhisperAPISTT (implements STTPort)
+│   └── web/
+│       └── server.py                # WebControlPlane (REST API + SSE + browser UI)
 │
 ├── capabilities/                    # Pluggable session-level features
 │   └── tunnel/
 │       └── tunnel.py                # TunnelCapability (dev server + cloudflared tunneling)
 │
-├── messenger/                       # Telegram bot adapter (implements ControlPlanePort)
-│   └── telegram/
-│       └── adapter.py               # TelegramAdapter (forum topics, permission buttons, deep-links)
-│
-├── dashboard/                       # Web dashboard
-│   ├── server.py                    # aiohttp web server + API routes
-│   ├── message_store.py             # Per-session in-memory message history
-│   └── index.html                   # Single-page dashboard (HTML+CSS+JS)
-│
 ├── storage/
-│   └── project_store.py             # Project registration CRUD (JSON file)
+│   ├── project_store.py             # Project registration CRUD (JSON file)
+│   └── message_store.py             # Per-session in-memory message history
 │
 └── data/                            # Runtime data (gitignored)
     ├── projects.json
@@ -501,7 +495,7 @@ For session recovery. Referenced on AFK daemon restart.
 
 ```
 python-telegram-bot[ext]>=21.0    # Telegram bot (asyncio native)
-aiohttp>=3.9                      # Web dashboard server
+aiohttp>=3.9                      # Web control plane server
 python-dotenv>=1.0                # Environment variable loading
 openai>=1.0                       # Whisper API for voice transcription (optional)
 ```
