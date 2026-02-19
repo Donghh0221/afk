@@ -15,8 +15,25 @@ from afk.core.events import (
     AgentStoppedEvent,
     AgentSystemEvent,
     EventBus,
+    EventLevel,
 )
 from afk.dashboard.message_store import MessageStore
+
+# ---------------------------------------------------------------------------
+# Level-to-behavior mapping for Telegram control plane
+# ---------------------------------------------------------------------------
+
+_SKIP = "skip"            # Not sent to Telegram
+_STORE_ONLY = "store"     # Stored in message_store, not sent to Telegram
+_SILENT = "silent"        # Stored + sent with silent=True (no notification)
+_NORMAL = "normal"        # Stored + sent with normal notification
+
+_LEVEL_BEHAVIOR: dict[EventLevel, str] = {
+    EventLevel.INTERNAL: _SKIP,
+    EventLevel.PROGRESS: _STORE_ONLY,
+    EventLevel.INFO: _SILENT,
+    EventLevel.NOTIFY: _NORMAL,
+}
 
 if TYPE_CHECKING:
     from afk.ports.control_plane import ControlPlanePort
@@ -130,15 +147,26 @@ class EventRenderer:
             pass
 
     async def _render_assistant(self, ev: AgentAssistantEvent) -> None:
-        """Process assistant content blocks — display text and tool use."""
+        """Process assistant content blocks using level-based dispatch."""
+        behavior = _LEVEL_BEHAVIOR[ev.level]
+
+        # Verbose override: PROGRESS → send silently instead of store-only
+        if behavior == _STORE_ONLY and ev.verbose:
+            behavior = _SILENT
+
+        if behavior == _SKIP:
+            return
+
         content_blocks = ev.content_blocks
 
         if isinstance(content_blocks, str):
             if content_blocks:
                 self._ms.append(ev.channel_id, "assistant", content_blocks)
-                await self._messenger.send_message(
-                    ev.channel_id, content_blocks, silent=True
-                )
+                if behavior != _STORE_ONLY:
+                    await self._messenger.send_message(
+                        ev.channel_id, content_blocks,
+                        silent=(behavior == _SILENT),
+                    )
             return
 
         texts: list[str] = []
@@ -166,25 +194,29 @@ class EventRenderer:
                 if result_text:
                     result_lines.append(result_text)
 
+        silent = (behavior == _SILENT)
+        should_send = behavior not in (_SKIP, _STORE_ONLY)
+
         if texts:
             text_body = "\n".join(texts)
             self._ms.append(ev.channel_id, "assistant", text_body)
-            await self._messenger.send_message(
-                ev.channel_id, text_body, silent=True
-            )
+            if should_send:
+                await self._messenger.send_message(
+                    ev.channel_id, text_body, silent=silent
+                )
         if tool_lines:
             tool_body = "\n".join(tool_lines)
             self._ms.append(ev.channel_id, "tool", tool_body)
-            if ev.verbose:
+            if should_send:
                 await self._messenger.send_message(
-                    ev.channel_id, tool_body, silent=True
+                    ev.channel_id, tool_body, silent=silent
                 )
         if result_lines:
             result_body = "\n".join(result_lines)
             self._ms.append(ev.channel_id, "tool", result_body)
-            if ev.verbose:
+            if should_send:
                 await self._messenger.send_message(
-                    ev.channel_id, result_body, silent=True
+                    ev.channel_id, result_body, silent=silent
                 )
 
 

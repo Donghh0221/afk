@@ -16,6 +16,7 @@ from afk.core.events import (
     AgentStoppedEvent,
     AgentSystemEvent,
     EventBus,
+    EventLevel,
 )
 from afk.core.git_worktree import (
     CommitMessageFn,
@@ -306,6 +307,19 @@ class SessionManager:
                     session_name=session.name,
                 ))
 
+    @staticmethod
+    def _classify_assistant_level(content_blocks: list) -> EventLevel:
+        """Classify the semantic level of assistant content blocks.
+
+        Pure content-based classification — no presentation concerns.
+        """
+        if isinstance(content_blocks, str):
+            return EventLevel.INFO
+        for block in content_blocks:
+            if isinstance(block, dict) and block.get("type") == "text":
+                return EventLevel.INFO
+        return EventLevel.PROGRESS
+
     def _publish_agent_event(self, session: Session, msg: dict) -> None:
         """Convert raw agent message to typed event and publish."""
         msg_type = msg.get("type")
@@ -326,10 +340,12 @@ class SessionManager:
                 msg.get("content")
                 or msg.get("message", {}).get("content", [])
             )
+            level = self._classify_assistant_level(content_blocks)
             self._event_bus.publish(AgentAssistantEvent(
                 channel_id=session.channel_id,
                 content_blocks=content_blocks,
                 session_name=session.name,
+                level=level,
                 verbose=session.verbose,
             ))
 

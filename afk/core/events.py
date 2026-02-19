@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import AsyncIterator, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,22 @@ class EventBus:
 
 
 # ---------------------------------------------------------------------------
+# Event level — semantic classification of agent actions
+# ---------------------------------------------------------------------------
+
+class EventLevel(Enum):
+    """Semantic importance level of an agent event.
+
+    Assigned at event creation time based on the nature of the agent action.
+    Control planes map levels to their own rendering strategies.
+    """
+    INTERNAL = "internal"   # System internals (session init)
+    PROGRESS = "progress"   # Tool use, intermediate work
+    INFO = "info"           # Agent text output
+    NOTIFY = "notify"       # Task completion, session lifecycle
+
+
+# ---------------------------------------------------------------------------
 # Event types
 # ---------------------------------------------------------------------------
 
@@ -64,6 +81,7 @@ class AgentSystemEvent:
     """Agent session ready (e.g. Claude system init message)."""
     channel_id: str
     agent_session_id: str | None
+    level: EventLevel = EventLevel.INTERNAL
 
 
 @dataclass(frozen=True)
@@ -72,7 +90,8 @@ class AgentAssistantEvent:
     channel_id: str
     content_blocks: list  # list[dict] — raw content blocks from agent
     session_name: str
-    verbose: bool
+    level: EventLevel
+    verbose: bool  # session metadata — renderers may use for presentation
 
 
 @dataclass(frozen=True)
@@ -81,6 +100,7 @@ class AgentResultEvent:
     channel_id: str
     cost_usd: float
     duration_ms: int
+    level: EventLevel = EventLevel.NOTIFY
 
 
 @dataclass(frozen=True)
@@ -88,6 +108,7 @@ class AgentStoppedEvent:
     """Agent process stopped unexpectedly."""
     channel_id: str
     session_name: str
+    level: EventLevel = EventLevel.NOTIFY
 
 
 @dataclass(frozen=True)
