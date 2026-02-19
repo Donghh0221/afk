@@ -5,6 +5,7 @@ import json
 import logging
 import shutil
 import time
+from pathlib import Path
 from typing import AsyncIterator
 
 from afk.ports.agent import AgentPort
@@ -32,6 +33,8 @@ class CodexAgent(AgentPort):
         self._event_queue: asyncio.Queue[dict | None] = asyncio.Queue()
         self._reader_task: asyncio.Task | None = None
         self._first_message = True
+        self._stderr_log_path: Path | None = None
+        self._stderr_drain_task: asyncio.Task | None = None
 
     # -- Properties ------------------------------------------------------------
 
@@ -47,7 +50,10 @@ class CodexAgent(AgentPort):
     # -- Lifecycle -------------------------------------------------------------
 
     async def start(
-        self, working_dir: str, session_id: str | None = None
+        self,
+        working_dir: str,
+        session_id: str | None = None,
+        stderr_log_path: Path | None = None,
     ) -> None:
         """Validate codex binary and prepare for first message."""
         if not shutil.which("codex"):
@@ -55,6 +61,7 @@ class CodexAgent(AgentPort):
 
         self._working_dir = working_dir
         self._session_id = session_id
+        self._stderr_log_path = stderr_log_path
         self._started = True
         self._first_message = session_id is None
 
@@ -95,6 +102,30 @@ class CodexAgent(AgentPort):
         )
 
         self._reader_task = asyncio.create_task(self._read_process_output())
+
+        if self._stderr_log_path and self._process.stderr:
+            self._stderr_drain_task = asyncio.create_task(
+                self._drain_stderr(self._process.stderr, self._stderr_log_path)
+            )
+
+    async def _drain_stderr(
+        self,
+        stream: asyncio.StreamReader,
+        log_path: Path,
+    ) -> None:
+        """Read stderr line-by-line and append to log file."""
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    f.write(line.decode("utf-8", errors="replace"))
+                    f.flush()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("stderr drain ended", exc_info=True)
 
     async def send_permission_response(
         self, request_id: str, allowed: bool
@@ -138,8 +169,16 @@ class CodexAgent(AgentPort):
             except asyncio.CancelledError:
                 pass
 
+        if self._stderr_drain_task:
+            self._stderr_drain_task.cancel()
+            try:
+                await self._stderr_drain_task
+            except asyncio.CancelledError:
+                pass
+
         self._process = None
         self._reader_task = None
+        self._stderr_drain_task = None
         logger.info("Codex agent stopped")
 
     # -- Internal helpers ------------------------------------------------------
@@ -154,6 +193,12 @@ class CodexAgent(AgentPort):
             except asyncio.CancelledError:
                 pass
             self._reader_task = None
+        if self._stderr_drain_task is not None:
+            try:
+                await self._stderr_drain_task
+            except asyncio.CancelledError:
+                pass
+            self._stderr_drain_task = None
         self._process = None
 
     async def _read_process_output(self) -> None:

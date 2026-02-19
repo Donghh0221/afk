@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+from pathlib import Path
 from typing import AsyncIterator
 
 from afk.ports.agent import AgentPort
@@ -19,6 +20,7 @@ class ClaudeCodeAgent(AgentPort):
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
         self._alive = False
+        self._stderr_task: asyncio.Task | None = None
 
     @property
     def session_id(self) -> str | None:
@@ -32,6 +34,7 @@ class ClaudeCodeAgent(AgentPort):
         self,
         working_dir: str,
         session_id: str | None = None,
+        stderr_log_path: Path | None = None,
     ) -> None:
         """Start Claude Code in headless mode."""
         claude_path = shutil.which("claude")
@@ -64,6 +67,30 @@ class ClaudeCodeAgent(AgentPort):
             env=env,
         )
         self._alive = True
+
+        if stderr_log_path and self._process.stderr:
+            self._stderr_task = asyncio.create_task(
+                self._drain_stderr(self._process.stderr, stderr_log_path)
+            )
+
+    async def _drain_stderr(
+        self,
+        stream: asyncio.StreamReader,
+        log_path: Path,
+    ) -> None:
+        """Read stderr line-by-line and append to log file."""
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    f.write(line.decode("utf-8", errors="replace"))
+                    f.flush()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("stderr drain ended", exc_info=True)
 
     async def send_message(self, text: str) -> None:
         """Send user message to stdin in stream-json format."""
@@ -134,6 +161,14 @@ class ClaudeCodeAgent(AgentPort):
 
     async def stop(self) -> None:
         """Stop the process."""
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except asyncio.CancelledError:
+                pass
+            self._stderr_task = None
+
         if self._process:
             self._alive = False
             try:

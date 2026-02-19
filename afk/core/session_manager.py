@@ -18,6 +18,7 @@ from afk.core.events import (
     EventBus,
     EventLevel,
 )
+from afk.core.session_log import SessionLogger
 from afk.core.git_worktree import (
     CommitMessageFn,
     commit_worktree_changes,
@@ -50,6 +51,7 @@ class Session:
     verbose: bool = False
     created_at: float = field(default_factory=time.time)
     _response_task: asyncio.Task | None = field(default=None, repr=False)
+    _session_logger: SessionLogger | None = field(default=None, repr=False)
 
 
 # Callback type for session cleanup (capabilities register these)
@@ -126,12 +128,21 @@ class SessionManager:
         # Create git worktree (raises RuntimeError on failure)
         await create_worktree(project_path, worktree_path, branch_name)
 
+        # Per-session logging (stored in data_dir, survives worktree cleanup)
+        session_logger = SessionLogger(
+            self._data_dir / "logs" / session_name, session_name,
+        )
+        session_logger.start()
+        session_logger.logger.info(
+            "Session created: project=%s worktree=%s", project_name, worktree_path,
+        )
+
         # Create forum topic (only after git succeeds — no orphan topics)
         channel_id = await self._messenger.create_session_channel(session_name)
 
         # Start agent process in the worktree directory
         agent = self._create_agent()
-        await agent.start(worktree_path)
+        await agent.start(worktree_path, stderr_log_path=session_logger.stderr_log_path)
 
         session = Session(
             name=session_name,
@@ -140,6 +151,7 @@ class SessionManager:
             worktree_path=worktree_path,
             channel_id=channel_id,
             agent=agent,
+            _session_logger=session_logger,
         )
 
         self._sessions[channel_id] = session
@@ -172,6 +184,11 @@ class SessionManager:
         # Stop agent process first (releases file handles on worktree)
         await session.agent.stop()
         session.agent_session_id = session.agent.session_id
+
+        # Close per-session logger
+        if session._session_logger:
+            session._session_logger.logger.info("Session stopped by user")
+            session._session_logger.close()
 
         # Remove git worktree and branch (best-effort)
         branch_name = f"afk/{session.name}"
@@ -224,12 +241,18 @@ class SessionManager:
             # Restart agent so session stays usable
             session.state = "idle"
             session.agent = self._create_agent()
+            stderr_path = session._session_logger.stderr_log_path if session._session_logger else None
             await session.agent.start(
-                session.worktree_path, session.agent_session_id
+                session.worktree_path, session.agent_session_id,
+                stderr_log_path=stderr_path,
             )
             session._response_task = asyncio.create_task(
                 self._read_loop(session)
             )
+            if session._session_logger:
+                session._session_logger.logger.warning(
+                    "Merge failed, session restarted: %s", merge_output[:200],
+                )
             return False, (
                 f"Merge failed for branch '{branch_name}'.\n"
                 f"Error: {merge_output}\n\n"
@@ -240,11 +263,16 @@ class SessionManager:
         # 5. Delete the branch (worktree already removed by merge_branch_to_main)
         await delete_branch(session.project_path, branch_name)
 
-        # 6. Clean up session state
+        # 6. Close per-session logger
+        if session._session_logger:
+            session._session_logger.logger.info("Session completed (merged into main)")
+            session._session_logger.close()
+
+        # 7. Clean up session state
         del self._sessions[channel_id]
         self._save_sessions()
 
-        # 7. Delete the forum topic
+        # 8. Delete the forum topic
         try:
             await self._messenger.close_session_channel(channel_id)
         except Exception:
@@ -288,6 +316,10 @@ class SessionManager:
         try:
             async for msg in session.agent.read_responses():
                 try:
+                    if session._session_logger:
+                        session._session_logger.write_raw(
+                            json.dumps(msg, ensure_ascii=False) + "\n"
+                        )
                     self._publish_agent_event(session, msg)
                 except Exception:
                     logger.exception(
@@ -302,6 +334,8 @@ class SessionManager:
             if session.state != "stopped":
                 session.state = "stopped"
                 await self._run_cleanup(session.channel_id)
+                if session._session_logger:
+                    session._session_logger.logger.info("Session ended (read loop exit)")
                 logger.info("Session ended: %s", session.name)
                 self._event_bus.publish(AgentStoppedEvent(
                     channel_id=session.channel_id,
@@ -331,6 +365,8 @@ class SessionManager:
                 session.agent_session_id = sid
                 self._save_sessions()
             session.state = "idle"
+            if session._session_logger:
+                session._session_logger.logger.info("Agent ready: session_id=%s", sid)
             self._event_bus.publish(AgentSystemEvent(
                 channel_id=session.channel_id,
                 agent_session_id=sid,
@@ -353,6 +389,11 @@ class SessionManager:
 
         elif msg_type == "result":
             session.state = "idle"
+            if session._session_logger:
+                session._session_logger.logger.info(
+                    "Task complete: cost=$%.4f duration=%dms",
+                    msg.get("total_cost_usd", 0), msg.get("duration_ms", 0),
+                )
             self._event_bus.publish(AgentResultEvent(
                 channel_id=session.channel_id,
                 cost_usd=msg.get("total_cost_usd", 0),
@@ -373,6 +414,10 @@ class SessionManager:
 
             await self._run_cleanup(channel_id)
             await session.agent.stop()
+
+            if session._session_logger:
+                session._session_logger.logger.info("Session suspended for daemon restart")
+                session._session_logger.close()
 
             session.state = "suspended"
 
@@ -428,8 +473,18 @@ class SessionManager:
                 continue
 
             try:
+                # Reopen per-session logging (append mode preserves previous logs)
+                session_logger = SessionLogger(
+                    self._data_dir / "logs" / session_name, session_name,
+                )
+                session_logger.start()
+                session_logger.logger.info("Session recovered from previous run")
+
                 agent = self._create_agent()
-                await agent.start(worktree_path, agent_session_id)
+                await agent.start(
+                    worktree_path, agent_session_id,
+                    stderr_log_path=session_logger.stderr_log_path,
+                )
 
                 session = Session(
                     name=session_name,
@@ -441,6 +496,7 @@ class SessionManager:
                     agent_session_id=agent_session_id,
                     verbose=verbose,
                     created_at=created_at,
+                    _session_logger=session_logger,
                 )
 
                 self._sessions[channel_id] = session

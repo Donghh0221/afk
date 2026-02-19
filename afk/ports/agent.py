@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import AsyncIterator, Protocol, runtime_checkable
 
 
@@ -22,7 +23,10 @@ class AgentPort(Protocol):
         ...
 
     async def start(
-        self, working_dir: str, session_id: str | None = None
+        self,
+        working_dir: str,
+        session_id: str | None = None,
+        stderr_log_path: Path | None = None,
     ) -> None:
         """Start the agent process in the given working directory."""
         ...

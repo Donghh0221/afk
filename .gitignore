@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .env
 afk/data/*.json
+afk/data/logs/
 venv/
 .venv/
 .afk-worktrees/
