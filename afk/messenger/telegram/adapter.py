@@ -20,6 +20,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 from afk.adapters.telegram.config import TelegramConfig
+from afk.ports.control_plane import ControlPlanePort
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ def _split_message(text: str) -> list[str]:
     return chunks
 
 
-class TelegramAdapter:
+class TelegramAdapter(ControlPlanePort):
     """MessengerPort implementation based on Telegram forum topics."""
 
     def __init__(self, config: TelegramConfig) -> None:

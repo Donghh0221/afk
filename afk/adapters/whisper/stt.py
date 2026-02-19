@@ -10,10 +10,12 @@ from pathlib import Path
 
 from openai import OpenAI
 
+from afk.ports.stt import STTPort
+
 logger = logging.getLogger(__name__)
 
 
-class WhisperAPISTT:
+class WhisperAPISTT(STTPort):
     """STTPort implementation using OpenAI Whisper API."""
 
     def __init__(self, api_key: str, model: str = "whisper-1") -> None:

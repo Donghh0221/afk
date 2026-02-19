@@ -7,10 +7,12 @@ import os
 import shutil
 from typing import AsyncIterator
 
+from afk.ports.agent import AgentPort
+
 logger = logging.getLogger(__name__)
 
 
-class ClaudeCodeAgent:
+class ClaudeCodeAgent(AgentPort):
     """AgentPort implementation wrapping the Claude Code CLI (stream-json protocol)."""
 
     def __init__(self) -> None:
