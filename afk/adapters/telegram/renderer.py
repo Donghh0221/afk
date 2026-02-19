@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 from afk.core.events import (
     AgentAssistantEvent,
+    AgentInputRequestEvent,
+    AgentPermissionRequestEvent,
     AgentResultEvent,
     AgentStoppedEvent,
     AgentSystemEvent,
@@ -65,6 +67,8 @@ class EventRenderer:
         self._tasks.append(asyncio.create_task(self._render_assistant_events()))
         self._tasks.append(asyncio.create_task(self._render_result_events()))
         self._tasks.append(asyncio.create_task(self._render_stopped_events()))
+        self._tasks.append(asyncio.create_task(self._render_permission_request_events()))
+        self._tasks.append(asyncio.create_task(self._render_input_request_events()))
 
     def stop(self) -> None:
         """Cancel all background tasks."""
@@ -142,6 +146,44 @@ class EventRenderer:
                 except Exception:
                     logger.warning(
                         "Failed to delete topic for %s", ev.session_name
+                    )
+        except asyncio.CancelledError:
+            pass
+
+    async def _render_permission_request_events(self) -> None:
+        """Render AgentPermissionRequestEvent — tool permission with Allow/Deny buttons."""
+        try:
+            async for ev in self._bus.iter_events(AgentPermissionRequestEvent):
+                try:
+                    tool_args = _summarize_tool_args(ev.tool_input)
+                    self._ms.append(
+                        ev.channel_id, "permission",
+                        f"⚠️ Permission: {ev.tool_name} — {tool_args}",
+                    )
+                    await self._messenger.send_permission_request(
+                        ev.channel_id, ev.tool_name, tool_args, ev.request_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Error rendering permission request for %s",
+                        ev.request_id,
+                    )
+        except asyncio.CancelledError:
+            pass
+
+    async def _render_input_request_events(self) -> None:
+        """Render AgentInputRequestEvent — agent ready for user input."""
+        try:
+            async for ev in self._bus.iter_events(AgentInputRequestEvent):
+                try:
+                    self._ms.append(ev.channel_id, "system", "Ready for input")
+                    await self._messenger.send_message(
+                        ev.channel_id, "💬 Ready for your input", silent=True,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Error rendering input request for %s",
+                        ev.session_name,
                     )
         except asyncio.CancelledError:
             pass

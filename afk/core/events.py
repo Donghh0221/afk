@@ -112,6 +112,24 @@ class AgentStoppedEvent:
 
 
 @dataclass(frozen=True)
+class AgentPermissionRequestEvent:
+    """Agent needs permission to use a tool (choice: Allow/Deny)."""
+    channel_id: str
+    request_id: str
+    tool_name: str
+    tool_input: dict
+    level: EventLevel = EventLevel.NOTIFY
+
+
+@dataclass(frozen=True)
+class AgentInputRequestEvent:
+    """Agent completed turn, waiting for user text input."""
+    channel_id: str
+    session_name: str
+    level: EventLevel = EventLevel.INFO
+
+
+@dataclass(frozen=True)
 class SessionCreatedEvent:
     """A new session was created."""
     channel_id: str

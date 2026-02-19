@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Callable, Awaitable
 
 from afk.core.events import (
     AgentAssistantEvent,
+    AgentInputRequestEvent,
+    AgentPermissionRequestEvent,
     AgentResultEvent,
     AgentStoppedEvent,
     AgentSystemEvent,
@@ -387,6 +389,21 @@ class SessionManager:
                 verbose=session.verbose,
             ))
 
+        elif msg_type == "permission_request":
+            session.state = "waiting_permission"
+            tool_name = msg.get("tool_name", "unknown")
+            if session._session_logger:
+                session._session_logger.logger.info(
+                    "Permission request: tool=%s id=%s",
+                    tool_name, msg.get("id", ""),
+                )
+            self._event_bus.publish(AgentPermissionRequestEvent(
+                channel_id=session.channel_id,
+                request_id=msg.get("id", ""),
+                tool_name=tool_name,
+                tool_input=msg.get("tool_input", {}),
+            ))
+
         elif msg_type == "result":
             session.state = "idle"
             if session._session_logger:
@@ -398,6 +415,10 @@ class SessionManager:
                 channel_id=session.channel_id,
                 cost_usd=msg.get("total_cost_usd", 0),
                 duration_ms=msg.get("duration_ms", 0),
+            ))
+            self._event_bus.publish(AgentInputRequestEvent(
+                channel_id=session.channel_id,
+                session_name=session.name,
             ))
 
     async def suspend_all_sessions(self) -> None:
