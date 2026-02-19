@@ -47,6 +47,7 @@ class ClaudeCodeAgent(AgentPort):
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--verbose",
+            "--dangerously-skip-permissions",
         ]
 
         if session_id:
