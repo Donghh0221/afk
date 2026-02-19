@@ -185,7 +185,3 @@ Open `http://localhost:7777` in a browser to see:
 ## Architecture
 
 3-layer hexagonal architecture with pluggable ports and adapters. See [ARCH.md](ARCH.md) for details.
-
-## License
-
-TBD
