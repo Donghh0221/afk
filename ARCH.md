@@ -99,8 +99,7 @@ afk/
 │   ├── events.py                    # EventBus (asyncio pub/sub) + typed event dataclasses
 │   ├── orchestrator.py              # Thin glue: wires messenger callbacks to Commands API
 │   ├── session_manager.py           # Session lifecycle (create, stop, complete, persist)
-│   ├── git_worktree.py              # Git worktree/branch operations
-│   └── config.py                    # CoreConfig (data_dir, dashboard_port)
+│   └── git_worktree.py              # Git worktree/branch operations
 │
 ├── adapters/                        # Concrete implementations of ports
 │   ├── claude_code/
@@ -110,7 +109,6 @@ afk/
 │   │   ├── config.py                # TelegramConfig (bot_token, group_id)
 │   │   └── renderer.py              # EventRenderer: EventBus events → Telegram messages
 │   └── whisper/
-│       ├── config.py                # WhisperConfig (api_key, model)
 │       └── stt.py                   # WhisperAPISTT (implements STTPort)
 │
 ├── capabilities/                    # Pluggable session-level features
@@ -118,7 +116,6 @@ afk/
 │       └── tunnel.py                # TunnelCapability (dev server + cloudflared tunneling)
 │
 ├── messenger/                       # Telegram bot adapter (implements ControlPlanePort)
-│   ├── port.py                      # MessengerPort protocol (legacy alias)
 │   └── telegram/
 │       └── adapter.py               # TelegramAdapter (forum topics, permission buttons, deep-links)
 │
