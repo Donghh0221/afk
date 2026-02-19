@@ -1,6 +1,6 @@
-# AFK — Code while AFK
+# AFK — Work while AFK
 
-A remote control plane for AI coding agents. Issue commands via Telegram (voice or text) from any device, while a local server runs coding sessions 24/7.
+A remote control plane for AI work sessions. Issue commands via Telegram (voice or text) from any device, while a local server runs sessions 24/7 — coding, writing, research, and more.
 
 ## Why
 
@@ -14,7 +14,7 @@ AFK breaks that loop:
 - **See what's happening.** A built-in web dashboard shows live session activity, message history, and daemon logs — all at `localhost:7777`.
 - **Verify remotely.** Start a dev server tunnel with `/tunnel` and preview your app from your phone.
 
-The target user is a solo entrepreneur or vibe coder who tells AI what to build, checks results, and moves on. AFK makes that workflow mobile.
+The target user is a solo entrepreneur, freelancer, or one-person agency who uses AI to produce real deliverables — code, documents, research reports. AFK makes that workflow mobile.
 
 ## How It Works
 
@@ -51,11 +51,12 @@ graph LR
 
 ## Prerequisites
 
-- **macOS** (tested on Apple Silicon)
+- **macOS or Linux** (tested on Apple Silicon; Linux support for always-on servers)
 - **Python 3.11+**
 - **Claude Code CLI** installed and authenticated (`claude` must be in PATH)
 - **Telegram Bot** — create one via [@BotFather](https://t.me/BotFather)
 - **Telegram Supergroup** with Topics (forum mode) enabled, bot added as admin
+- **Docker** (optional) — for containerized deployment
 
 ## Setup
 
