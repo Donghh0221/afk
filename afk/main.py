@@ -19,7 +19,7 @@ from afk.core.commands import Commands
 from afk.core.events import EventBus
 from afk.dashboard.message_store import MessageStore
 from afk.dashboard.server import DashboardServer
-from afk.messenger.telegram.adapter import TelegramAdapter
+from afk.adapters.telegram.adapter import TelegramAdapter
 from afk.core.session_manager import SessionManager
 from afk.core.orchestrator import Orchestrator
 from afk.storage.project_store import ProjectStore
