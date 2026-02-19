@@ -1,6 +1,6 @@
 # AFK — Code while AFK
 
-A remote control plane for AI coding agents. Issue commands via Telegram (voice or text) from any device, while your Mac mini runs coding sessions 24/7.
+A remote control plane for AI coding agents. Issue commands via Telegram (voice or text) from any device, while a local server runs coding sessions 24/7.
 
 ## Why
 
@@ -8,7 +8,7 @@ Terminals are a bottleneck. You sit at a desk, type prompts, wait for responses,
 
 AFK breaks that loop:
 
-- **Work from anywhere.** Send a voice message from your phone while commuting. The agent runs on your Mac mini back home.
+- **Work from anywhere.** Send a voice message from your phone while commuting. The agent runs on your server back home.
 - **Run multiple sessions.** Each Telegram forum topic is an isolated agent session. Start one for frontend, another for backend, check in when you want.
 - **Stay in control without being present.** Permission requests arrive as push notifications with approve/deny buttons. No terminal window required.
 - **See what's happening.** A built-in web dashboard shows live session activity, message history, and daemon logs — all at `localhost:7777`.
@@ -19,7 +19,7 @@ The target user is a solo entrepreneur or vibe coder who tells AI what to build,
 ## How It Works
 
 ```
-Phone / MacBook                         Mac mini (always on)
+Phone / Laptop                          Server (always on)
 │                                       │
 │  Telegram voice or text  ────────────>│  AFK daemon
 │                                       │    ├── Control Plane (Telegram bot)
@@ -100,43 +100,10 @@ Dashboard running at http://localhost:7777
 
 ### 5. Run as a Daemon (optional)
 
-To keep AFK running 24/7 on a Mac mini, create a launchd plist:
+To keep AFK running 24/7, set up a launchd plist (macOS) or systemd service (Linux):
 
 ```bash
-cat > ~/Library/LaunchAgents/com.afk.daemon.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.afk.daemon</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/path/to/uv</string>
-        <string>run</string>
-        <string>afk</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>/path/to/afk</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>AFK_TELEGRAM_BOT_TOKEN</key>
-        <string>your-token</string>
-        <key>AFK_TELEGRAM_GROUP_ID</key>
-        <string>-100xxxxxxxxxx</string>
-    </dict>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/afk.out.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/afk.err.log</string>
-</dict>
-</plist>
-EOF
-
+# macOS example — see install.sh for automated setup
 launchctl load ~/Library/LaunchAgents/com.afk.daemon.plist
 ```
 
@@ -207,53 +174,7 @@ Open `http://localhost:7777` in a browser to see:
 
 ## Architecture
 
-3-layer hexagonal architecture with pluggable ports and adapters:
-
-- **Ports** — abstract interfaces (`AgentPort`, `ControlPlanePort`, `STTPort`) that define boundaries between layers
-- **Adapters** — concrete implementations (Claude Code, Telegram, Whisper API)
-- **Capabilities** — pluggable session-level features (tunnel, etc.)
-- **Commands API** — single entry point for all control planes
-- **EventBus** — typed pub/sub for agent output → control plane rendering
-
-```
-afk/
-├── main.py                          # Entry point, wires everything together
-├── ports/                           # Abstract interfaces (Protocol definitions only)
-│   ├── agent.py                     # AgentPort — agent runtime interface
-│   ├── control_plane.py             # ControlPlanePort — messenger/UI interface
-│   └── stt.py                       # STTPort — speech-to-text interface
-├── core/                            # Business logic (never imports adapters)
-│   ├── commands.py                  # Commands API — single entry point for all control planes
-│   ├── events.py                    # EventBus + typed event dataclasses
-│   ├── orchestrator.py              # Thin glue: wires messenger callbacks to Commands
-│   ├── session_manager.py           # Session lifecycle (create/stop/complete/query)
-│   ├── git_worktree.py              # Git worktree/branch operations
-│   └── config.py                    # CoreConfig
-├── adapters/                        # Concrete implementations of ports
-│   ├── claude_code/
-│   │   ├── agent.py                 # ClaudeCodeAgent (implements AgentPort)
-│   │   └── commit_helper.py         # AI-generated commit messages via Claude CLI
-│   ├── telegram/
-│   │   ├── config.py                # TelegramConfig
-│   │   └── renderer.py              # EventRenderer — subscribes to EventBus, renders to Telegram
-│   └── whisper/
-│       ├── config.py                # WhisperConfig
-│       └── stt.py                   # WhisperAPISTT (implements STTPort)
-├── capabilities/                    # Pluggable session-level features
-│   └── tunnel/
-│       └── tunnel.py                # TunnelCapability (cloudflared dev server tunneling)
-├── messenger/                       # Telegram bot (ControlPlanePort implementation)
-│   ├── port.py                      # MessengerPort protocol (legacy, see ports/control_plane.py)
-│   └── telegram/
-│       └── adapter.py               # TelegramAdapter (forum topics, inline buttons)
-├── dashboard/                       # Web dashboard
-│   ├── server.py                    # aiohttp web server + REST API
-│   ├── message_store.py             # In-memory per-session message history
-│   └── index.html                   # Single-page dashboard UI
-├── storage/
-│   └── project_store.py             # Project name → path registry (JSON file)
-└── data/                            # Runtime data (gitignored)
-```
+3-layer hexagonal architecture with pluggable ports and adapters. See [ARCH.md](ARCH.md) for details.
 
 ## License
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AFK ("Away From Keyboard") is a Python daemon that serves as a remote control plane for AI coding agents. Built for solo entrepreneurs and vibe coders who want to issue commands via Telegram (voice or text) from any device, while a Mac mini runs sessions 24/7.
+AFK ("Away From Keyboard") is a Python daemon that serves as a remote control plane for AI coding agents. Users issue commands via Telegram (voice or text) from any device, while a local server runs coding sessions 24/7. See `PROJECT.md` for vision and `ARCH.md` for detailed architecture.
 
 ## Tech Stack
 
@@ -18,15 +18,9 @@ AFK ("Away From Keyboard") is a Python daemon that serves as a remote control pl
 - **cloudflared** — quick tunnels for remote verification (optional)
 - **uv** — Python package manager (uv.lock)
 
-## Architecture
+## Architecture Boundary Rules
 
-3-layer hexagonal (port-adapter) architecture with three abstraction boundaries:
-
-- **AgentPort** (`ports/agent.py`) — abstract interface for agent runtimes. Adapters: `adapters/claude_code/agent.py` (Claude Code CLI), `adapters/codex/agent.py` (OpenAI Codex CLI).
-- **ControlPlanePort** (`ports/control_plane.py`) — abstract interface for control plane integrations. MVP adapter: `messenger/telegram/adapter.py` (forum topics for session isolation).
-- **STTPort** (`ports/stt.py`) — abstract interface for speech-to-text. MVP adapter: `adapters/whisper/stt.py` (OpenAI Whisper API).
-
-### Boundary Rules
+3-layer hexagonal (port-adapter) architecture. **These rules must be followed strictly:**
 
 1. `core/` never imports from `adapters/`, `messenger/`, `capabilities/`, or any external tool (Telegram, Claude, cloudflared)
 2. `ports/` contains only Protocol definitions — no implementations
@@ -35,27 +29,7 @@ AFK ("Away From Keyboard") is a Python daemon that serves as a remote control pl
 5. `core.commands` is the single entry point for all control planes
 6. All agent output flows as typed events through EventBus
 
-### Core Components (`core/`)
-
-- **Commands** (`commands.py`) — single entry point (facade) for all control planes. Returns plain dataclasses, never messenger-specific objects.
-- **EventBus** (`events.py`) — asyncio-based typed pub/sub. Agent output → events → control plane rendering.
-- **Orchestrator** (`orchestrator.py`) — thin glue layer: registers messenger callbacks, delegates to Commands API.
-- **SessionManager** (`session_manager.py`) — manages session lifecycle (create/stop/complete), each session = one agent subprocess + one control plane channel + one git worktree. Publishes events to EventBus.
-- **GitWorktree** (`git_worktree.py`) — git worktree/branch management for session isolation. Commit message generation is injected via `commit_message_fn` (no Claude CLI dependency in core).
-
-### Adapters
-
-- **ClaudeCodeAgent** (`adapters/claude_code/agent.py`) — implements AgentPort, wraps Claude Code subprocess using stream-json protocol.
-- **CodexAgent** (`adapters/codex/agent.py`) — implements AgentPort, wraps OpenAI Codex CLI using `codex exec --json` (fire-and-complete model with `resume` for multi-turn).
-- **commit_helper** (`adapters/claude_code/commit_helper.py`) — generates commit messages using Claude Code CLI `-p` mode.
-- **EventRenderer** (`adapters/telegram/renderer.py`) — subscribes to EventBus events, renders them as Telegram messages.
-- **WhisperAPISTT** (`adapters/whisper/stt.py`) — implements STTPort using OpenAI Whisper API.
-
-### Capabilities
-
-- **TunnelCapability** (`capabilities/tunnel/tunnel.py`) — dev server detection + cloudflared tunneling per session. Registered as cleanup callback with SessionManager.
-
-### Data Flow
+## Data Flow
 
 ```
 Text message  → TelegramAdapter → Orchestrator → Commands → SessionManager → Agent (stdin)
@@ -64,52 +38,6 @@ Voice message → TelegramAdapter → Orchestrator → Commands → STT (transcr
 Agent (stdout) → SessionManager._read_loop → EventBus.publish(typed events)
   → EventRenderer → messenger.send_message (to Telegram)
   → MessageStore (for dashboard)
-```
-
-### Storage (`storage/`)
-
-- `data/projects.json` — registered project names → local paths
-- `data/sessions.json` — session state for daemon restart recovery
-
-## Module Structure
-
-```
-afk/
-├── main.py                          # Entry point, wires everything together
-├── ports/                           # Abstract interfaces (Protocol definitions only)
-│   ├── agent.py                     # AgentPort protocol
-│   ├── control_plane.py             # ControlPlanePort protocol
-│   └── stt.py                       # STTPort protocol
-├── core/                            # Business logic (never imports adapters)
-│   ├── commands.py                  # Commands API — single entry point
-│   ├── events.py                    # EventBus + typed event dataclasses
-│   ├── orchestrator.py              # Thin glue: messenger callbacks → Commands
-│   ├── session_manager.py           # Session lifecycle, publishes events
-│   └── git_worktree.py              # Git worktree/branch operations
-├── adapters/                        # Concrete implementations of ports
-│   ├── claude_code/
-│   │   ├── agent.py                 # ClaudeCodeAgent (implements AgentPort)
-│   │   └── commit_helper.py         # AI commit message generation
-│   ├── codex/
-│   │   └── agent.py                 # CodexAgent (implements AgentPort)
-│   ├── telegram/
-│   │   ├── config.py                # TelegramConfig
-│   │   └── renderer.py              # EventRenderer (EventBus → Telegram)
-│   └── whisper/
-│       └── stt.py                   # WhisperAPISTT (implements STTPort)
-├── capabilities/
-│   └── tunnel/
-│       └── tunnel.py                # TunnelCapability (dev server + cloudflared)
-├── messenger/                       # Telegram bot (ControlPlanePort implementation)
-│   └── telegram/
-│       └── adapter.py               # TelegramAdapter (forum topics, inline buttons)
-├── dashboard/
-│   ├── server.py                    # aiohttp web server + API routes
-│   ├── message_store.py             # Per-session in-memory message history
-│   └── index.html                   # Single-page dashboard (HTML+CSS+JS)
-├── storage/
-│   └── project_store.py             # Project name → path registry
-└── data/                            # Runtime data (gitignored)
 ```
 
 ## Telegram Commands
@@ -144,4 +72,3 @@ afk/
 - Deep-links use `https://t.me/c/{group_id}/{channel_id}` scheme
 - Voice support is conditionally enabled only when OpenAI API key is configured
 - Capabilities register cleanup callbacks with SessionManager — cleanup runs on `/stop` or `/complete`
-- Detailed architecture spec: `ARCH.md`; product spec with phased roadmap: `PROJECT.md`

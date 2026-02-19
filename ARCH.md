@@ -7,12 +7,12 @@
 - **STT-agnostic**: Speech recognition abstracted via `STTPort`. Swappable between Whisper API/local/Deepgram.
 - **Event-driven**: All agent output flows as typed events through an `EventBus`. Control planes subscribe and render.
 - **Single entry point**: All control planes call the `Commands` API — never session manager or agent directly.
-- **Always-on daemon**: Runs 24/7 as a launchd daemon on Mac mini. Accessible from any device.
+- **Always-on daemon**: Runs 24/7 as a background daemon. Accessible from any device.
 
 ## System Architecture
 
 ```
-📱 Phone         💻 MacBook        🖥️ Mac mini (AFK Server)
+📱 Phone         💻 Laptop         🖥️ AFK Server (always on)
 │                │                 │
 │ Telegram       │ Telegram        │ ┌──────────────────────────────────┐
 │                │ + CLI (future)  │ │          AFK Daemon              │
