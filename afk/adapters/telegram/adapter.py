@@ -186,6 +186,21 @@ class TelegramAdapter(ControlPlanePort):
             disable_notification=False,
         )
 
+    async def send_photo(
+        self, channel_id: str, photo_path: str, caption: str = ""
+    ) -> str:
+        """Send a photo/image to a forum topic."""
+        bot = self._app.bot
+        thread_id = int(channel_id) if channel_id != "general" else None
+        with open(photo_path, "rb") as f:
+            msg = await bot.send_photo(
+                chat_id=self._group_id,
+                photo=f,
+                caption=caption[:1024] if caption else None,
+                message_thread_id=thread_id,
+            )
+        return str(msg.message_id)
+
     async def send_document(
         self, channel_id: str, file_path: str, caption: str = ""
     ) -> str:

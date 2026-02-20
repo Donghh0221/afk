@@ -151,7 +151,7 @@ async def _handle_status(request: web.Request) -> web.Response:
     status = cmd.cmd_get_status(channel_id)
     if not status:
         return web.json_response({"error": "session not found"}, status=404)
-    return web.json_response({
+    data = {
         "name": status.name,
         "state": status.state,
         "agent_alive": status.agent_alive,
@@ -160,7 +160,11 @@ async def _handle_status(request: web.Request) -> web.Response:
         "worktree_path": status.worktree_path,
         "tunnel_url": status.tunnel_url,
         "tunnel_type": status.tunnel_type,
-    })
+    }
+    # Expose exp:// URL separately for Expo tunnels (web UI can generate QR)
+    if status.tunnel_type == "expo" and status.tunnel_url:
+        data["expo_url"] = status.tunnel_url
+    return web.json_response(data)
 
 
 async def _handle_messages(request: web.Request) -> web.Response:

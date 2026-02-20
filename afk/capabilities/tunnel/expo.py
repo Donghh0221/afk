@@ -23,6 +23,7 @@ class ExpoTunnelProcess:
         self._process: asyncio.subprocess.Process | None = None
         self._public_url: str | None = None
         self._config: DevServerConfig | None = None
+        self._hostname: str | None = None
 
     @property
     def public_url(self) -> str | None:
@@ -150,6 +151,7 @@ class ExpoTunnelProcess:
                     if not t.cancelled():
                         result = t.result()
                         if result:
+                            result = self._ensure_exp_scheme(result)
                             logger.info("Expo tunnel URL: %s", result)
                             return result
 
@@ -160,6 +162,7 @@ class ExpoTunnelProcess:
                 # Fallback: query ngrok API
                 url = await self._query_ngrok_api()
                 if url:
+                    url = self._ensure_exp_scheme(url)
                     logger.info("Expo tunnel URL (via ngrok API): %s", url)
                     return url
 
@@ -169,6 +172,24 @@ class ExpoTunnelProcess:
 
         await self.stop()
         raise RuntimeError("Timed out waiting for Expo tunnel URL")
+
+    def _ensure_exp_scheme(self, url: str) -> str:
+        """Convert HTTPS tunnel URLs to exp:// scheme for Expo Go compatibility."""
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        if parsed.scheme == "exp":
+            # Already exp://, save hostname for future conversions
+            self._hostname = parsed.hostname
+            return url
+        if parsed.scheme in ("http", "https"):
+            # Convert https://host.ngrok.io -> exp://host.ngrok.io
+            host = parsed.hostname or ""
+            port = f":{parsed.port}" if parsed.port else ""
+            exp_url = f"exp://{host}{port}"
+            self._hostname = parsed.hostname
+            return exp_url
+        return url
 
     async def _query_ngrok_api(self) -> str | None:
         """Try to get the tunnel URL from ngrok's local API."""
@@ -204,3 +225,4 @@ class ExpoTunnelProcess:
 
         self._process = None
         self._public_url = None
+        self._hostname = None

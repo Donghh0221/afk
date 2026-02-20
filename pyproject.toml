@@ -8,6 +8,7 @@ dependencies = [
     "aiohttp>=3.9",
     "python-dotenv>=1.0",
     "openai>=1.0",
+    "segno>=1.6",
 ]
 
 [project.optional-dependencies]

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from typing import TYPE_CHECKING
 
 from afk.core.commands import Commands
@@ -402,20 +403,17 @@ class Orchestrator:
                 )
             return
 
-        # Already running — resend URL with type-appropriate label
+        # Already running — resend URL with type-appropriate presentation
         tunnel_info = self._cmd.cmd_get_tunnel_info(channel_id)
         if tunnel_info:
             url = tunnel_info["public_url"]
             if tunnel_info["tunnel_type"] == "expo":
-                label = "Open in Expo Go"
-                status_text = f"Expo tunnel already running: {url}"
+                await self._send_expo_qr(channel_id, url)
             else:
-                label = "Open in browser"
-                status_text = f"Tunnel already running: {url}"
-            await self._messenger.send_message(
-                channel_id, status_text,
-                link_url=url, link_label=label,
-            )
+                await self._messenger.send_message(
+                    channel_id, f"Tunnel already running: {url}",
+                    link_url=url, link_label="Open in browser",
+                )
             return
 
         msg_id = await self._messenger.send_message(
@@ -432,10 +430,7 @@ class Orchestrator:
                 await self._messenger.edit_message(
                     channel_id, msg_id, "✅ Expo tunnel active",
                 )
-                await self._messenger.send_message(
-                    channel_id, url,
-                    link_url=url, link_label="Open in Expo Go",
-                )
+                await self._send_expo_qr(channel_id, url)
             else:
                 await self._messenger.edit_message(
                     channel_id, msg_id, "✅ Tunnel active",
@@ -448,6 +443,31 @@ class Orchestrator:
             await self._messenger.edit_message(
                 channel_id, msg_id, f"❌ Tunnel failed: {e}"
             )
+
+    async def _send_expo_qr(self, channel_id: str, url: str) -> None:
+        """Generate and send a QR code image for an Expo tunnel URL."""
+        import segno
+
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".png", delete=False
+            ) as tmp:
+                tmp_path = tmp.name
+            segno.make(url).save(tmp_path, scale=8, border=2)
+            await self._messenger.send_photo(
+                channel_id, tmp_path, caption="Scan with Expo Go"
+            )
+        except Exception as e:
+            logger.warning("Failed to send QR code: %s", e)
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+        # Send plain text URL for easy copy-paste
+        await self._messenger.send_message(channel_id, url)
 
     async def _handle_template_command(
         self, channel_id: str, args: list[str]

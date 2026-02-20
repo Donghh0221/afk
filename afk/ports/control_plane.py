@@ -45,6 +45,12 @@ class ControlPlanePort(Protocol):
         """Delete/close a session-dedicated channel."""
         ...
 
+    async def send_photo(
+        self, channel_id: str, photo_path: str, caption: str = ""
+    ) -> str:
+        """Send a photo/image. Returns: message ID."""
+        ...
+
     async def send_document(
         self, channel_id: str, file_path: str, caption: str = ""
     ) -> str:
