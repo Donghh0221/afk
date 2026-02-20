@@ -51,74 +51,129 @@ graph LR
 
 ## Prerequisites
 
-- **macOS or Linux** (tested on Apple Silicon; Linux support for always-on servers)
-- **Python 3.11+**
-- **Claude Code CLI** installed and authenticated (`claude` must be in PATH)
-- **Telegram Bot** — create one via [@BotFather](https://t.me/BotFather)
-- **Telegram Supergroup** with Topics (forum mode) enabled, bot added as admin
-- **Docker** (optional) — for containerized deployment
+| Requirement | Notes |
+|---|---|
+| **macOS or Linux** | Tested on Apple Silicon; Linux works for always-on servers |
+| **Python 3.11+** | Check with `python3 --version` |
+| **uv** | Python package manager ([install](https://docs.astral.sh/uv/getting-started/installation/)) |
+| **Git** | `git --version` |
+| **Claude Code CLI** | Must be installed and authenticated — see step 2 below |
+| **Telegram account** | For the bot and supergroup setup |
 
-## Setup
+## Setup from Scratch
 
-### 1. Create Telegram Bot & Group
-
-1. Message [@BotFather](https://t.me/BotFather) on Telegram → `/newbot` → save the **bot token**
-2. Create a new Telegram group
-3. Convert it to a supergroup: Group Settings → scroll down → "Topics" → enable
-4. Add your bot to the group as **admin** (needs permissions: manage topics, send messages)
-5. Get the **group ID**: add [@raw_data_bot](https://t.me/raw_data_bot) to the group, it will print the chat ID (negative number)
-
-### 2. Install AFK
+### Quick Install (Automated)
 
 ```bash
-git clone <repo-url> && cd afk
+bash <(curl -fsSL https://raw.githubusercontent.com/Donghh0221/afk/main/install.sh)
+```
 
-# Using uv (recommended)
+This script checks prerequisites, installs dependencies, creates `.env`, and optionally sets up a launchd daemon. If you prefer manual setup, follow the steps below.
+
+### Step 1. Create Telegram Bot & Supergroup
+
+**Create a bot:**
+
+1. Open Telegram and message [@BotFather](https://t.me/BotFather)
+2. Send `/newbot`, follow the prompts to name your bot
+3. Copy the **bot token** (looks like `7349288428:AAF32REWFK55Ygt_...`)
+
+**Create a supergroup with Topics:**
+
+1. Create a new Telegram group (any name — e.g. "AFK Workspace")
+2. Go to Group Settings → scroll down → enable **Topics** (forum mode)
+3. Add your bot to the group as **admin** with these permissions:
+   - Manage Topics
+   - Send Messages
+   - Edit Messages
+   - Delete Messages
+
+**Get the group ID:**
+
+1. Add [@raw_data_bot](https://t.me/raw_data_bot) to the group temporarily
+2. It will print the **chat ID** — a negative number like `-1001234567890`
+3. Save this number, then remove the bot from the group
+
+### Step 2. Install Claude Code CLI
+
+AFK uses Claude Code as the default agent runtime. Install and authenticate it:
+
+```bash
+# Install
+npm install -g @anthropic-ai/claude-code
+
+# Authenticate (opens browser)
+claude
+
+# Verify
+claude --version
+```
+
+Make sure `claude` is available in your PATH. AFK launches it in headless mode (`--input-format stream-json --output-format stream-json`) per session.
+
+### Step 3. Clone & Install AFK
+
+```bash
+git clone https://github.com/Donghh0221/afk.git
+cd afk
+
+# Install dependencies with uv
 uv sync
+```
 
-# Or using pip
+If you don't have `uv`:
+
+```bash
+# Install uv first
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Or use pip instead
 pip install -e .
 ```
 
-### 3. Configure Environment
+### Step 4. Configure Environment
 
-Create a `.env` file or export these variables:
+Create a `.env` file in the project root:
 
 ```bash
-export AFK_TELEGRAM_BOT_TOKEN="your-bot-token-here"
-export AFK_TELEGRAM_GROUP_ID="-100xxxxxxxxxx"
-# Optional
-export AFK_BASE_PATH="~/workspace"    # Smart /new — auto-creates projects here
-export AFK_DASHBOARD_PORT="7777"
-export AFK_AGENT="claude"             # Default agent runtime (claude or codex)
-export AFK_OPENAI_API_KEY="sk-..."    # Enables voice message transcription
+# Required
+AFK_TELEGRAM_BOT_TOKEN="your-bot-token-here"
+AFK_TELEGRAM_GROUP_ID="-100xxxxxxxxxx"
+
+# Optional — enables voice messages (Whisper) and Deep Research agent
+AFK_OPENAI_API_KEY="sk-..."
+
+# Optional — auto-resolve project paths with /new
+AFK_BASE_PATH="~/workspace"
+
+# Optional — web dashboard port (default: 7777)
+AFK_DASHBOARD_PORT="7777"
+
+# Optional — default agent runtime: claude (default), codex, or deep-research
+AFK_AGENT="claude"
 ```
 
-### 4. Run
+### Step 5. Run
 
 ```bash
-# With uv
 uv run afk
-
-# Or directly
-python -m afk.main
 ```
 
-AFK starts the Telegram bot and the web control plane. You'll see:
+You should see:
 
 ```
 AFK is running. Press Ctrl+C to stop.
 Web control plane running at http://localhost:7777
 ```
 
-### 5. Run as a Daemon (optional)
+AFK is now listening for Telegram messages and serving the web dashboard.
 
-To keep AFK running 24/7, set up a launchd plist (macOS) or systemd service (Linux):
+### Step 6. Verify
 
-```bash
-# macOS example — see install.sh for automated setup
-launchctl load ~/Library/LaunchAgents/com.afk.daemon.plist
-```
+1. Open Telegram → go to your supergroup
+2. Send `/project add ~/projects/myapp MyApp` (register a project)
+3. Send `/new MyApp` — a new forum topic is created with an active agent session
+4. Switch to the new topic and type a prompt — the agent should respond
 
 ## Usage
 
@@ -126,23 +181,20 @@ All interaction happens in your Telegram supergroup.
 
 ### Start a Session
 
-The simplest way — just set `AFK_BASE_PATH` and start without registering projects:
+The simplest way — set `AFK_BASE_PATH` and skip manual project registration:
 
 ```
-/new myapp                        # Start a session from $AFK_BASE_PATH/myapp
+/new myapp                        # Start from $AFK_BASE_PATH/myapp
+/new myapp -v                     # Verbose — show full tool input/output
+/new myapp --agent codex          # Use Codex for this session only
+/new myapp --agent deep-research  # Use OpenAI Deep Research
+/new myapp --template nextjs      # Apply workspace template
 ```
 
-What happens:
-
-1. If `myapp` is already a registered project → use it as-is
-2. If `$AFK_BASE_PATH/myapp` directory exists → auto-register and start session (runs `git init` if not a git repo)
-3. If the directory doesn't exist → create it + `git init` + auto-register + start session
-
-```
-/new myapp -v                     # verbose — show full tool input/output
-/new myapp --agent codex          # use Codex for this session only
-/new myapp -v -a codex            # both flags work together
-```
+What happens with `/new`:
+1. If `myapp` is already a registered project → use it
+2. If `$AFK_BASE_PATH/myapp` exists → auto-register and start (runs `git init` if needed)
+3. If the directory doesn't exist → create it + `git init` + start
 
 To manage projects manually:
 
@@ -152,9 +204,7 @@ To manage projects manually:
 /project remove myapp
 ```
 
-> Without `AFK_BASE_PATH`, you must register projects with `/project add` before using `/new`.
-
-This creates a new forum topic (`myapp-260218-143022`) with an isolated git worktree and starts an agent subprocess.
+Each `/new` creates a forum topic (e.g. `myapp-260218-143022`) with an isolated git worktree and starts an agent subprocess.
 
 ### Send Prompts
 
@@ -175,20 +225,34 @@ The agent works on it. You'll see streaming tool calls and responses. When it's 
 Start a dev server tunnel from the session topic:
 
 ```
-/tunnel                # auto-detect dev server and expose via cloudflared
-/tunnel stop           # stop the tunnel
+/tunnel                # Auto-detect dev server and expose via cloudflared
+/tunnel stop           # Stop the tunnel
 ```
+
+Requires [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) to be installed.
 
 ### Manage Sessions
 
 ```
 /sessions          # List all active sessions (General topic)
 /status            # Check current session state (session topic)
-/stop              # Stop current session (session topic)
-/complete          # Merge branch into main and clean up (session topic)
+/stop              # Stop current session and remove worktree (session topic)
+/complete          # Commit, merge branch into main, clean up (session topic)
 ```
 
-### Web Control Plane
+### Workspace Templates
+
+Templates provide pre-configured scaffolds and agent context for different work types:
+
+```
+/template list                     # List available templates
+/new myapp --template nextjs       # Next.js 15 project scaffold
+/new myapp --template research     # Research report scaffold
+/new myapp --template writing      # Writing/content scaffold
+/new myapp --template coding       # Generic coding scaffold
+```
+
+## Web Control Plane
 
 Open `http://localhost:7777` in a browser to:
 
@@ -197,6 +261,180 @@ Open `http://localhost:7777` in a browser to:
 - View per-session message history and daemon logs
 - Stream live agent events via SSE
 
+The web CP also provides a REST API:
+
+```
+GET  /api/sessions                              # List sessions
+POST /api/sessions                              # Create session
+GET  /api/sessions/{channel_id}/status          # Session status
+GET  /api/sessions/{channel_id}/messages        # Message history
+POST /api/sessions/{channel_id}/message         # Send text
+POST /api/sessions/{channel_id}/stop            # Stop session
+POST /api/sessions/{channel_id}/complete        # Complete & merge
+POST /api/sessions/{channel_id}/permission      # Permission response
+GET  /api/sessions/{channel_id}/files/{name}    # Download session file
+GET  /api/events                                # SSE event stream
+GET  /api/projects                              # List projects
+POST /api/projects                              # Add project
+DELETE /api/projects/{name}                     # Remove project
+GET  /api/logs                                  # Daemon log tail
+```
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `AFK_TELEGRAM_BOT_TOKEN` | Yes | — | Telegram bot token from @BotFather |
+| `AFK_TELEGRAM_GROUP_ID` | Yes | — | Supergroup chat ID (negative number) |
+| `AFK_OPENAI_API_KEY` | No | — | Enables voice transcription (Whisper) and Deep Research agent. Also reads `OPENAI_API_KEY` |
+| `AFK_AGENT` | No | `claude` | Default agent runtime: `claude`, `codex`, or `deep-research` |
+| `AFK_BASE_PATH` | No | — | Base directory for smart `/new` auto-resolution |
+| `AFK_DASHBOARD_PORT` | No | `7777` | Web control plane port |
+| `AFK_DEEP_RESEARCH_MODEL` | No | `o4-mini-deep-research` | OpenAI Deep Research model |
+| `AFK_DEEP_RESEARCH_MAX_TOOL_CALLS` | No | — | Max tool calls for Deep Research cost control |
+
+## Running as a Daemon
+
+### macOS (launchd)
+
+The install script can set this up automatically (`bash install.sh`), or manually:
+
+```bash
+# Create plist
+cat > ~/Library/LaunchAgents/com.afk.daemon.plist << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.afk.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/uv</string>
+        <string>run</string>
+        <string>afk</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/path/to/afk</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/afk.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/afk.err.log</string>
+</dict>
+</plist>
+EOF
+
+# Update paths in the plist, then:
+launchctl load ~/Library/LaunchAgents/com.afk.daemon.plist
+```
+
+Manage the daemon:
+
+```bash
+launchctl load   ~/Library/LaunchAgents/com.afk.daemon.plist  # Start
+launchctl unload ~/Library/LaunchAgents/com.afk.daemon.plist  # Stop
+tail -f /tmp/afk.out.log /tmp/afk.err.log                    # Logs
+```
+
+### Linux (systemd)
+
+```bash
+cat > ~/.config/systemd/user/afk.service << 'EOF'
+[Unit]
+Description=AFK Daemon
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/afk
+ExecStart=/path/to/uv run afk
+Restart=always
+RestartSec=5
+EnvironmentFile=/path/to/afk/.env
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now afk
+journalctl --user -u afk -f    # Logs
+```
+
+## Session Lifecycle
+
+Each session follows this lifecycle:
+
+```
+/new MyApp
+  → creates branch: afk/myapp-260218-143022
+  → creates worktree: .afk-worktrees/myapp-260218-143022
+  → creates Telegram forum topic
+  → starts agent subprocess
+
+[user sends prompts, agent works]
+
+/complete
+  → auto-commits uncommitted changes
+  → rebases onto main + fast-forward merge
+  → removes worktree and branch
+  → deletes forum topic
+
+/stop (alternative)
+  → stops agent, removes worktree, no merge
+```
+
+Sessions survive daemon restarts — on startup, AFK recovers active sessions from `sessions.json` and resumes agent processes with their previous context.
+
 ## Architecture
 
-3-layer hexagonal architecture with pluggable ports and adapters. See [ARCH.md](ARCH.md) for details.
+3-layer hexagonal architecture with pluggable ports and adapters:
+
+```
+┌─────────────────────────────────────────────────┐
+│  Adapters                                       │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐│
+│  │ Telegram  │ │   Web    │ │ Claude/Codex/DR  ││
+│  │ Adapter   │ │  Server  │ │ Agent Adapters   ││
+│  └────┬─────┘ └────┬─────┘ └───────┬──────────┘│
+├───────┼────────────┼────────────────┼───────────┤
+│  Ports│(Protocols) │                │           │
+│  ┌────┴─────┐ ┌────┴─────┐ ┌───────┴──────┐   │
+│  │ Control  │ │ Control  │ │   Agent      │   │
+│  │PlanePort │ │PlanePort │ │   Port       │   │
+│  └────┬─────┘ └────┬─────┘ └───────┬──────┘   │
+├───────┼────────────┼────────────────┼───────────┤
+│  Core │            │                │           │
+│  ┌────┴────────────┴────────────────┴────────┐ │
+│  │  Commands → SessionManager → EventBus     │ │
+│  │            → GitWorktree                  │ │
+│  └───────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────┘
+```
+
+See [ARCH.md](ARCH.md) for the full architecture deep dive and [PROJECT.md](PROJECT.md) for vision and roadmap.
+
+## Development
+
+```bash
+# Install with test dependencies
+uv sync --extra test
+
+# Run tests
+uv run pytest
+
+# Run a specific test
+uv run pytest tests/test_session_manager.py -v
+
+# Run the daemon in development
+uv run afk
+```
+
+## License
+
+MIT
