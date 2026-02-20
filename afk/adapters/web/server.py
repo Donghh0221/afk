@@ -159,6 +159,7 @@ async def _handle_status(request: web.Request) -> web.Response:
         "project_path": status.project_path,
         "worktree_path": status.worktree_path,
         "tunnel_url": status.tunnel_url,
+        "tunnel_type": status.tunnel_type,
     })
 
 

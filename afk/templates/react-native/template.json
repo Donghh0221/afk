@@ -1,0 +1,10 @@
+{
+  "name": "react-native",
+  "description": "React Native (Expo) project with tunnel support",
+  "agent": "claude",
+  "capabilities": ["tunnel"],
+  "completion_criteria": {
+    "required_files": ["package.json", "app.json", "app/(tabs)/index.tsx"],
+    "description": "App runs successfully in Expo Go"
+  }
+}

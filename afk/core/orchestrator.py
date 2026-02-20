@@ -371,7 +371,11 @@ class Orchestrator:
             return
 
         alive = "✅ Running" if status.agent_alive else "🔴 Stopped"
-        tunnel_info = f"\nTunnel: {status.tunnel_url}" if status.tunnel_url else ""
+        if status.tunnel_url:
+            tunnel_label = f"Tunnel ({status.tunnel_type})" if status.tunnel_type else "Tunnel"
+            tunnel_info = f"\n{tunnel_label}: {status.tunnel_url}"
+        else:
+            tunnel_info = ""
         await self._messenger.send_message(
             channel_id,
             f"📊 Session: {status.name}\n"
@@ -398,34 +402,48 @@ class Orchestrator:
                 )
             return
 
-        # Already running — resend URL
-        existing_url = self._cmd.cmd_get_tunnel_url(channel_id)
-        if existing_url:
+        # Already running — resend URL with type-appropriate label
+        tunnel_info = self._cmd.cmd_get_tunnel_info(channel_id)
+        if tunnel_info:
+            url = tunnel_info["public_url"]
+            if tunnel_info["tunnel_type"] == "expo":
+                label = "Open in Expo Go"
+                status_text = f"Expo tunnel already running: {url}"
+            else:
+                label = "Open in browser"
+                status_text = f"Tunnel already running: {url}"
             await self._messenger.send_message(
-                channel_id,
-                f"Tunnel already running: {existing_url}",
-                link_url=existing_url,
-                link_label="Open tunnel",
+                channel_id, status_text,
+                link_url=url, link_label=label,
             )
             return
 
         msg_id = await self._messenger.send_message(
             channel_id,
-            "⏳ Starting dev server + cloudflared tunnel...",
+            "⏳ Starting tunnel...",
             silent=True,
         )
 
         try:
             url = await self._cmd.cmd_start_tunnel(channel_id)
-            await self._messenger.edit_message(
-                channel_id, msg_id, "✅ Tunnel active",
-            )
-            await self._messenger.send_message(
-                channel_id,
-                url,
-                link_url=url,
-                link_label="Open in browser",
-            )
+            # Check what type of tunnel was started
+            info = self._cmd.cmd_get_tunnel_info(channel_id)
+            if info and info["tunnel_type"] == "expo":
+                await self._messenger.edit_message(
+                    channel_id, msg_id, "✅ Expo tunnel active",
+                )
+                await self._messenger.send_message(
+                    channel_id, url,
+                    link_url=url, link_label="Open in Expo Go",
+                )
+            else:
+                await self._messenger.edit_message(
+                    channel_id, msg_id, "✅ Tunnel active",
+                )
+                await self._messenger.send_message(
+                    channel_id, url,
+                    link_url=url, link_label="Open in browser",
+                )
         except RuntimeError as e:
             await self._messenger.edit_message(
                 channel_id, msg_id, f"❌ Tunnel failed: {e}"

@@ -47,6 +47,7 @@ class SessionStatus:
     project_path: str
     worktree_path: str
     tunnel_url: str | None
+    tunnel_type: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -278,10 +279,12 @@ class Commands:
             return None
 
         tunnel_url = None
+        tunnel_type = None
         if self._tunnel:
             t = self._tunnel.get_tunnel(channel_id)
             if t:
                 tunnel_url = t.public_url
+                tunnel_type = t.tunnel_type
 
         return SessionStatus(
             name=session.name,
@@ -291,6 +294,7 @@ class Commands:
             project_path=session.project_path,
             worktree_path=session.worktree_path,
             tunnel_url=tunnel_url,
+            tunnel_type=tunnel_type,
         )
 
     async def cmd_permission_response(
@@ -346,3 +350,16 @@ class Commands:
             return None
         t = self._tunnel.get_tunnel(channel_id)
         return t.public_url if t else None
+
+    def cmd_get_tunnel_info(self, channel_id: str) -> dict | None:
+        """Get tunnel info (type, URL, framework) if active."""
+        if not self._tunnel:
+            return None
+        t = self._tunnel.get_tunnel(channel_id)
+        if not t:
+            return None
+        return {
+            "tunnel_type": t.tunnel_type,
+            "public_url": t.public_url,
+            "framework": t.config.framework if t.config else None,
+        }

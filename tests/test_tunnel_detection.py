@@ -9,6 +9,7 @@ from afk.capabilities.tunnel.tunnel import (
     _build_port_args,
     _detect_framework,
     _detect_package_manager,
+    _is_expo_project,
     detect_dev_server,
 )
 
@@ -117,3 +118,88 @@ class TestDetectDevServer:
         assert config is not None
         assert config.framework == "vite"
         assert config.command[0] == "yarn"
+
+
+class TestIsExpoProject:
+    def test_expo_with_app_json(self, tmp_path: Path):
+        pkg = {"dependencies": {"expo": "~52.0.0", "react-native": "0.76.0"}}
+        (tmp_path / "app.json").write_text('{"expo": {}}')
+        assert _is_expo_project(tmp_path, pkg) is True
+
+    def test_expo_with_app_config_js(self, tmp_path: Path):
+        pkg = {"dependencies": {"expo": "~52.0.0"}}
+        (tmp_path / "app.config.js").write_text("module.exports = {};")
+        assert _is_expo_project(tmp_path, pkg) is True
+
+    def test_expo_with_app_config_ts(self, tmp_path: Path):
+        pkg = {"dependencies": {"expo": "~52.0.0"}}
+        (tmp_path / "app.config.ts").write_text("export default {};")
+        assert _is_expo_project(tmp_path, pkg) is True
+
+    def test_no_expo_dep(self, tmp_path: Path):
+        pkg = {"dependencies": {"react-native": "0.76.0"}}
+        (tmp_path / "app.json").write_text('{}')
+        assert _is_expo_project(tmp_path, pkg) is False
+
+    def test_expo_dep_but_no_config(self, tmp_path: Path):
+        pkg = {"dependencies": {"expo": "~52.0.0"}}
+        assert _is_expo_project(tmp_path, pkg) is False
+
+    def test_expo_in_dev_dependencies(self, tmp_path: Path):
+        pkg = {"devDependencies": {"expo": "~52.0.0"}}
+        (tmp_path / "app.json").write_text('{}')
+        assert _is_expo_project(tmp_path, pkg) is True
+
+
+class TestDetectDevServerExpo:
+    def test_expo_project_detected(self, tmp_path: Path):
+        pkg = {
+            "name": "my-expo-app",
+            "dependencies": {"expo": "~52.0.0", "react-native": "0.76.0"},
+        }
+        (tmp_path / "package.json").write_text(json.dumps(pkg))
+        (tmp_path / "app.json").write_text('{"expo": {"name": "test"}}')
+        config = detect_dev_server(str(tmp_path))
+        assert config is not None
+        assert config.framework == "expo"
+        assert "expo" in config.command
+        assert "--tunnel" in config.command
+        assert config.port > 0
+
+    def test_expo_without_dev_script(self, tmp_path: Path):
+        """Expo projects should be detected even without a 'dev' script."""
+        pkg = {
+            "name": "my-expo-app",
+            "dependencies": {"expo": "~52.0.0"},
+            "scripts": {"build": "expo export"},
+        }
+        (tmp_path / "package.json").write_text(json.dumps(pkg))
+        (tmp_path / "app.json").write_text('{"expo": {}}')
+        config = detect_dev_server(str(tmp_path))
+        assert config is not None
+        assert config.framework == "expo"
+
+    def test_expo_takes_priority_over_web(self, tmp_path: Path):
+        """Expo detection should run before web framework detection."""
+        pkg = {
+            "name": "test",
+            "dependencies": {"expo": "~52.0.0", "next": "14.0"},
+            "scripts": {"dev": "next dev"},
+        }
+        (tmp_path / "package.json").write_text(json.dumps(pkg))
+        (tmp_path / "app.json").write_text('{"expo": {}}')
+        config = detect_dev_server(str(tmp_path))
+        assert config is not None
+        assert config.framework == "expo"
+
+    def test_web_framework_not_affected(self, tmp_path: Path):
+        """Non-Expo projects should still detect web frameworks correctly."""
+        pkg = {
+            "name": "test",
+            "scripts": {"dev": "next dev"},
+            "dependencies": {"next": "14.0"},
+        }
+        (tmp_path / "package.json").write_text(json.dumps(pkg))
+        config = detect_dev_server(str(tmp_path))
+        assert config is not None
+        assert config.framework == "next"
