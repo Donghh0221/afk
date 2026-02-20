@@ -298,6 +298,7 @@ async def _handle_file_download(request: web.Request) -> web.Response:
 async def _handle_sse(request: web.Request) -> web.StreamResponse:
     """GET /api/events — Server-Sent Events stream for all agent events."""
     event_bus: EventBus = request.app["event_bus"]
+    shutdown_event: asyncio.Event = request.app["shutdown_event"]
 
     response = web.StreamResponse(
         status=200,
@@ -325,17 +326,25 @@ async def _handle_sse(request: web.Request) -> web.StreamResponse:
         except asyncio.CancelledError:
             pass
 
+    async def _watch_shutdown() -> None:
+        await shutdown_event.wait()
+        await merged.put(None)  # Sentinel to break the loop
+
     tasks = [asyncio.create_task(_forward(et)) for et in _SSE_EVENT_TYPES]
+    shutdown_task = asyncio.create_task(_watch_shutdown())
 
     try:
         while True:
             ev = await merged.get()
+            if ev is None:
+                break
             data = _serialize_event(ev)
             payload = f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
             await response.write(payload.encode("utf-8"))
     except (asyncio.CancelledError, ConnectionResetError):
         pass
     finally:
+        shutdown_task.cancel()
         for t in tasks:
             t.cancel()
         for event_type, q in subscriptions:
@@ -422,6 +431,8 @@ class WebControlPlane:
         self._app = _build_app(commands, event_bus, message_store, log_file)
         self._port = port
         self._runner: web.AppRunner | None = None
+        self._shutdown_event = asyncio.Event()
+        self._app["shutdown_event"] = self._shutdown_event
 
     async def start(self) -> None:
         self._runner = web.AppRunner(self._app)
@@ -432,5 +443,7 @@ class WebControlPlane:
 
     async def stop(self) -> None:
         if self._runner:
+            self._shutdown_event.set()
+            await asyncio.sleep(0.1)  # Let SSE handlers exit
             await self._runner.cleanup()
             logger.info("Web control plane stopped")
