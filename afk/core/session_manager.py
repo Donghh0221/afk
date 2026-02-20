@@ -355,7 +355,7 @@ class SessionManager:
                         session._session_logger.write_raw(
                             json.dumps(msg, ensure_ascii=False) + "\n"
                         )
-                    self._publish_agent_event(session, msg)
+                    await self._publish_agent_event(session, msg)
                 except Exception:
                     logger.exception(
                         "Error publishing event for %s: %s",
@@ -390,7 +390,10 @@ class SessionManager:
                 return EventLevel.INFO
         return EventLevel.PROGRESS
 
-    def _publish_agent_event(self, session: Session, msg: dict) -> None:
+    # Tools that are auto-approved in headless mode (no user prompt needed).
+    _AUTO_APPROVE_TOOLS = frozenset({"ExitPlanMode"})
+
+    async def _publish_agent_event(self, session: Session, msg: dict) -> None:
         """Convert raw agent message to typed event and publish."""
         msg_type = msg.get("type")
 
@@ -423,16 +426,33 @@ class SessionManager:
             ))
 
         elif msg_type == "permission_request":
-            session.state = "waiting_permission"
             tool_name = msg.get("tool_name", "unknown")
+            request_id = msg.get("id", "")
+
             if session._session_logger:
                 session._session_logger.logger.info(
                     "Permission request: tool=%s id=%s",
-                    tool_name, msg.get("id", ""),
+                    tool_name, request_id,
                 )
+
+            # Auto-approve internal tools like ExitPlanMode that don't need
+            # user interaction in headless mode.
+            if tool_name in self._AUTO_APPROVE_TOOLS:
+                logger.info(
+                    "Auto-approving %s for session %s", tool_name, session.name,
+                )
+                if session._session_logger:
+                    session._session_logger.logger.info(
+                        "Auto-approved %s (id=%s)", tool_name, request_id,
+                    )
+                await session.agent.send_permission_response(request_id, True)
+                session.state = "running"
+                return
+
+            session.state = "waiting_permission"
             self._event_bus.publish(AgentPermissionRequestEvent(
                 channel_id=session.channel_id,
-                request_id=msg.get("id", ""),
+                request_id=request_id,
                 tool_name=tool_name,
                 tool_input=msg.get("tool_input", {}),
             ))
