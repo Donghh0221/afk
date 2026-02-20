@@ -22,6 +22,7 @@ from afk.core.events import (
     AgentStoppedEvent,
     AgentSystemEvent,
     EventBus,
+    FileReadyEvent,
 )
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ _SSE_EVENT_TYPES: list[type] = [
     AgentStoppedEvent,
     AgentPermissionRequestEvent,
     AgentInputRequestEvent,
+    FileReadyEvent,
 ]
 
 
@@ -79,6 +81,10 @@ def _serialize_event(ev: object) -> dict:
 
     elif isinstance(ev, AgentInputRequestEvent):
         data["session_name"] = ev.session_name
+
+    elif isinstance(ev, FileReadyEvent):
+        data["file_path"] = ev.file_path
+        data["file_name"] = ev.file_name
 
     return data
 
@@ -264,6 +270,29 @@ async def _handle_remove_project(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "message": msg})
 
 
+# -- Files ------------------------------------------------------------------
+
+async def _handle_file_download(request: web.Request) -> web.Response:
+    """GET /api/sessions/{channel_id}/files/{filename} — download a session file."""
+    cmd: Commands = request.app["cmd"]
+    channel_id = request.match_info["channel_id"]
+    filename = request.match_info["filename"]
+
+    session = cmd.cmd_get_session(channel_id)
+    if not session:
+        return web.json_response({"error": "session not found"}, status=404)
+
+    # Resolve and validate path (prevent traversal)
+    worktree = Path(session.worktree_path).resolve()
+    file_path = (worktree / filename).resolve()
+    if not file_path.is_relative_to(worktree):
+        return web.json_response({"error": "forbidden"}, status=403)
+    if not file_path.is_file():
+        return web.json_response({"error": "file not found"}, status=404)
+
+    return web.FileResponse(file_path)
+
+
 # -- SSE --------------------------------------------------------------------
 
 async def _handle_sse(request: web.Request) -> web.StreamResponse:
@@ -365,6 +394,7 @@ def _build_app(
     app.router.add_post("/api/sessions/{channel_id}/stop", _handle_stop)
     app.router.add_post("/api/sessions/{channel_id}/complete", _handle_complete)
     app.router.add_post("/api/sessions/{channel_id}/permission", _handle_permission)
+    app.router.add_get("/api/sessions/{channel_id}/files/{filename}", _handle_file_download)
 
     # Projects
     app.router.add_get("/api/projects", _handle_list_projects)

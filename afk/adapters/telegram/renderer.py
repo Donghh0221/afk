@@ -18,6 +18,7 @@ from afk.core.events import (
     AgentSystemEvent,
     EventBus,
     EventLevel,
+    FileReadyEvent,
 )
 from afk.storage.message_store import MessageStore
 
@@ -74,6 +75,7 @@ class EventRenderer:
         self._tasks.append(asyncio.create_task(self._render_stopped_events()))
         self._tasks.append(asyncio.create_task(self._render_permission_request_events()))
         self._tasks.append(asyncio.create_task(self._render_input_request_events()))
+        self._tasks.append(asyncio.create_task(self._render_file_ready_events()))
 
     def stop(self) -> None:
         """Cancel all background tasks."""
@@ -195,6 +197,29 @@ class EventRenderer:
                     logger.exception(
                         "Error rendering input request for %s",
                         ev.session_name,
+                    )
+        except asyncio.CancelledError:
+            pass
+
+    async def _render_file_ready_events(self) -> None:
+        """Render FileReadyEvent — send file document to Telegram."""
+        try:
+            async for ev in self._bus.iter_events(FileReadyEvent):
+                try:
+                    self._ms.append(
+                        ev.channel_id, "file",
+                        f"File: {ev.file_name}",
+                        meta={"file_path": ev.file_path},
+                    )
+                    if not _is_web_channel(ev.channel_id):
+                        await self._messenger.send_document(
+                            ev.channel_id, ev.file_path,
+                            caption=f"\U0001f4c4 {ev.file_name}",
+                        )
+                except Exception:
+                    logger.exception(
+                        "Error rendering file ready event for %s",
+                        ev.file_name,
                     )
         except asyncio.CancelledError:
             pass

@@ -130,6 +130,15 @@ class AgentInputRequestEvent:
 
 
 @dataclass(frozen=True)
+class FileReadyEvent:
+    """Agent produced a file deliverable for the user."""
+    channel_id: str
+    file_path: str      # absolute path
+    file_name: str       # display name (e.g. "report.md")
+    level: EventLevel = EventLevel.NOTIFY
+
+
+@dataclass(frozen=True)
 class SessionCreatedEvent:
     """A new session was created."""
     channel_id: str

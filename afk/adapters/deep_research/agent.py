@@ -227,6 +227,13 @@ class DeepResearchAgent(AgentPort):
             # 6. Save report to worktree
             report_path = self._save_report(report_text)
 
+            # 6a. Emit file output event for auto-send
+            self._event_queue.put_nowait({
+                "type": "file_output",
+                "file_path": str(report_path),
+                "file_name": report_path.name,
+            })
+
             # 7. Git commit
             commit_msg = f"Add deep research report: {prompt[:60]}"
             await self._git_commit(commit_msg)

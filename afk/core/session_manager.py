@@ -19,6 +19,7 @@ from afk.core.events import (
     AgentSystemEvent,
     EventBus,
     EventLevel,
+    FileReadyEvent,
 )
 from afk.core.session_log import SessionLogger
 from afk.core.git_worktree import (
@@ -455,6 +456,17 @@ class SessionManager:
                 request_id=request_id,
                 tool_name=tool_name,
                 tool_input=msg.get("tool_input", {}),
+            ))
+
+        elif msg_type == "file_output":
+            file_path = msg.get("file_path", "")
+            file_name = msg.get("file_name", Path(file_path).name if file_path else "file")
+            if session._session_logger:
+                session._session_logger.logger.info("File ready: %s", file_name)
+            self._event_bus.publish(FileReadyEvent(
+                channel_id=session.channel_id,
+                file_path=file_path,
+                file_name=file_name,
             ))
 
         elif msg_type == "result":

@@ -45,6 +45,12 @@ class ControlPlanePort(Protocol):
         """Delete/close a session-dedicated channel."""
         ...
 
+    async def send_document(
+        self, channel_id: str, file_path: str, caption: str = ""
+    ) -> str:
+        """Send a file/document. Returns: message ID."""
+        ...
+
     async def download_voice(self, file_id: str) -> str:
         """Download a voice message file. Returns: local file path."""
         ...
