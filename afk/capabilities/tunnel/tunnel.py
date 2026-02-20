@@ -160,7 +160,7 @@ class TunnelProcess:
             env=env,
         )
 
-        # 2. Wait for dev server to be ready
+        # 2. Wait for dev server to be ready (reads stdout+stderr, checks TCP port)
         await self._wait_for_dev_server()
 
         # 3. Start cloudflared
@@ -177,33 +177,79 @@ class TunnelProcess:
 
     # ------------------------------------------------------------------
 
-    async def _wait_for_dev_server(self, timeout: float = 15.0) -> None:
-        """Wait until the dev server prints a ready-like message."""
-        if not self._dev_server or not self._dev_server.stderr:
+    async def _wait_for_dev_server(self, timeout: float = 30.0) -> None:
+        """Wait until the dev server is ready (output keywords + TCP port check)."""
+        if not self._dev_server:
             return
 
-        try:
-            deadline = asyncio.get_event_loop().time() + timeout
-            while asyncio.get_event_loop().time() < deadline:
-                remaining = deadline - asyncio.get_event_loop().time()
+        port = self._config.port if self._config else None
+        ready_keywords = ["ready", "started", "listening", "compiled", "localhost"]
+
+        async def _read_stream(stream: asyncio.StreamReader | None, label: str) -> bool:
+            """Read lines from a stream, return True if a ready keyword is found."""
+            if not stream:
+                return False
+            while True:
                 try:
-                    line = await asyncio.wait_for(
-                        self._dev_server.stderr.readline(),
-                        timeout=min(remaining, 2.0),
-                    )
+                    line = await asyncio.wait_for(stream.readline(), timeout=1.0)
                 except asyncio.TimeoutError:
+                    return False
+                if not line:
+                    return False
+                text = line.decode("utf-8", errors="replace").strip()
+                if text:
+                    logger.debug("dev-server(%s): %s", label, text)
+                if any(kw in text.lower() for kw in ready_keywords):
+                    return True
+
+        async def _check_port(p: int) -> bool:
+            """Return True if TCP connection to localhost:p succeeds."""
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection("127.0.0.1", p), timeout=1.0,
+                )
+                writer.close()
+                await writer.wait_closed()
+                return True
+            except (OSError, asyncio.TimeoutError):
+                return False
+
+        try:
+            loop = asyncio.get_event_loop()
+            deadline = loop.time() + timeout
+
+            while loop.time() < deadline:
+                # Read from both stdout and stderr concurrently
+                tasks = [
+                    asyncio.create_task(_read_stream(self._dev_server.stdout, "out")),
+                    asyncio.create_task(_read_stream(self._dev_server.stderr, "err")),
+                ]
+                done, pending = await asyncio.wait(
+                    tasks, timeout=2.0, return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+
+                # If any stream found a ready keyword, verify with port check
+                if any(t.result() for t in done if not t.cancelled()):
+                    if port and await _check_port(port):
+                        logger.info("Dev server ready (keyword + port %d open)", port)
+                        return
+                    # Keyword found but port not open yet — keep waiting
+                    logger.debug("Ready keyword found but port %d not open yet", port)
                     continue
 
-                if not line:
-                    break
-
-                text = line.decode("utf-8", errors="replace").strip()
-                logger.debug("dev-server: %s", text)
-
-                if any(kw in text.lower() for kw in [
-                    "ready", "started", "listening", "compiled", "localhost",
-                ]):
+                # No keyword yet — try a direct TCP port check as fallback
+                if port and await _check_port(port):
+                    logger.info("Dev server ready (port %d open)", port)
                     return
+
+                # Check if dev server process died
+                if self._dev_server.returncode is not None:
+                    logger.warning("Dev server exited with code %d", self._dev_server.returncode)
+                    return
+
+            logger.warning("Timed out waiting for dev server (port %s)", port)
         except Exception as e:
             logger.warning("Error waiting for dev server: %s", e)
 
