@@ -6,7 +6,7 @@ This document is for contributors who want to understand, modify, or extend the 
 
 ### Why hexagonal architecture?
 
-AFK needs to support multiple control planes (Telegram now, Slack/CLI/web later) and multiple agent runtimes (Claude Code now, Codex/Aider later). A hexagonal (port-adapter) pattern keeps the core logic independent from both, so adding a new control plane or agent is just implementing an interface — no core changes needed.
+AFK supports multiple control planes (Telegram + web) and agent runtimes (Claude Code for v1, with Codex and Deep Research as experimental). A hexagonal (port-adapter) pattern keeps the core logic independent from both, so adding a new control plane or agent is just implementing an interface — no core changes needed.
 
 ### Why EventBus instead of direct callbacks?
 
@@ -26,8 +26,8 @@ All control planes (Telegram, web API) go through the same `Commands` class. Thi
 ┌─────────────────────────────────────────────────┐
 │  Adapters (external integrations)               │
 │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐│
-│  │ Telegram  │ │   Web    │ │ Claude/Codex/DR  ││
-│  │ Adapter   │ │  Server  │ │ Agent Adapters   ││
+│  │ Telegram  │ │   Web    │ │  Claude Code     ││
+│  │ Adapter   │ │  Server  │ │  Agent Adapter   ││
 │  └────┬─────┘ └────┬─────┘ └───────┬──────────┘│
 ├───────┼────────────┼────────────────┼───────────┤
 │  Ports│(Protocols) │                │           │
@@ -65,10 +65,25 @@ afk/
 │   ├── session_manager.py           # Session lifecycle (create, stop, complete, persist)
 │   └── git_worktree.py              # Git worktree/branch operations
 ├── adapters/                        # Concrete implementations of ports
+│   ├── claude_code/                 # Claude Code CLI agent (v1)
+│   ├── telegram/                    # Telegram control plane (v1)
+│   ├── web/                         # Web control plane (v1)
+│   └── experimental/               # Non-v1 adapters
+│       ├── codex/                   # OpenAI Codex CLI agent
+│       ├── deep_research/           # OpenAI Deep Research agent
+│       └── whisper/                 # Whisper STT for voice input
 ├── capabilities/                    # Pluggable session-level features
+│   └── tunnel/                      # Dev server tunneling (cloudflared)
+├── templates/                       # Workspace templates
+│   ├── nextjs/                      # Next.js project scaffold (v1)
+│   └── experimental/               # Non-v1 templates
+│       ├── coding/                  # Generic coding scaffold
+│       ├── research/                # Research report scaffold
+│       └── writing/                 # Writing/content scaffold
 ├── storage/
 │   ├── project_store.py             # Project registration CRUD (JSON file)
-│   └── message_store.py             # Per-session in-memory message history
+│   ├── message_store.py             # Per-session in-memory message history
+│   └── template_store.py            # Template discovery and application
 └── data/                            # Runtime data (gitignored)
     ├── projects.json
     └── sessions.json
@@ -255,24 +270,26 @@ orchestrator = Orchestrator(messenger, commands)
 
 ### Adding an Agent Runtime
 
-Implement `AgentPort` and place it under `adapters/`:
+Implement `AgentPort` and place it under `adapters/` (or `adapters/experimental/` for non-stable runtimes):
 
 ```
 adapters/
-├── claude_code/agent.py     # Claude Code CLI (current)
-├── codex/agent.py           # OpenAI Codex CLI (current)
-├── deep_research/agent.py   # OpenAI Deep Research (current)
-└── your_agent/agent.py      # Your new agent
+├── claude_code/agent.py              # Claude Code CLI (v1)
+├── experimental/
+│   ├── codex/agent.py                # OpenAI Codex CLI (experimental)
+│   └── deep_research/agent.py        # OpenAI Deep Research (experimental)
+└── your_agent/agent.py               # Your new agent
 ```
 
 ### Adding a Control Plane
 
-Implement `ControlPlanePort` and place it under `adapters/` or `messenger/`:
+Implement `ControlPlanePort` and place it under `adapters/`:
 
 ```
-messenger/
-├── telegram/                # Telegram forum topics (current)
-└── slack/adapter.py         # e.g. Slack thread-based
+adapters/
+├── telegram/                # Telegram forum topics (v1)
+├── web/                     # Web dashboard (v1)
+└── your_cp/adapter.py       # Your new control plane
 ```
 
 ### Adding a Capability

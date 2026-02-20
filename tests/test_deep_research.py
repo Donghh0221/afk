@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from afk.adapters.deep_research.agent import DeepResearchAgent
+from afk.adapters.experimental.deep_research.agent import DeepResearchAgent
 
 
 class TestExtractCitations:

@@ -12,24 +12,28 @@ Solo entrepreneurs, freelancers, one-person agencies — anyone who uses AI to p
 
 ## Current Status
 
-### Done
+### v1 (Current Release)
 
 - Telegram control plane (forum topics as session channels)
 - Web control plane (localhost:7777) with REST API + SSE
-- Multi-session support with git worktree isolation
 - Claude Code agent adapter (stream-json protocol)
-- OpenAI Codex agent adapter
-- OpenAI Deep Research agent adapter
-- Voice input via Whisper API
+- Multi-session support with git worktree isolation
 - EventBus-based typed event system
 - Session persistence and daemon restart recovery
 - Orphan worktree cleanup on startup
 - Tunnel capability (cloudflared)
-- Workspace templates (nextjs, research, writing, coding)
+- Workspace templates (nextjs)
 - Per-channel message history persistence (JSONL)
 - `/complete` with auto-commit + rebase merge
 - Permission request flow (Allow/Deny buttons)
 - Install script with launchd daemon setup
+
+### Experimental (adapters/experimental/, templates/experimental/)
+
+- OpenAI Codex agent adapter
+- OpenAI Deep Research agent adapter
+- Voice input via Whisper API
+- Workspace templates (research, writing, coding)
 
 ### Known Limitations
 
@@ -60,6 +64,7 @@ Solo entrepreneurs, freelancers, one-person agencies — anyone who uses AI to p
 
 ### Phase 3: Workspace expansion + ecosystem
 
+- Promote experimental adapters (Codex, Deep Research, Whisper) to stable
 - Writing / research / data analysis workspace types
 - Expanded template system
 - Agent runtime expansion (Aider, etc. via AgentPort)
@@ -75,5 +80,5 @@ Solo entrepreneurs, freelancers, one-person agencies — anyone who uses AI to p
 ## Non-goals
 
 - **General-purpose AI assistant** — AFK does not send emails, make payments, or take actions on your behalf. It focuses exclusively on producing file-based project deliverables: code, research artifacts, and documents.
-- **Custom LLM integration layer** — AFK does not replace or reinvent LLM runtimes. It orchestrates existing agent runtimes (Claude Code, Codex, etc.) and wraps them in a unified session lifecycle.
+- **Custom LLM integration layer** — AFK does not replace or reinvent LLM runtimes. It orchestrates existing agent runtimes (Claude Code for v1, with others as experimental) and wraps them in a unified session lifecycle.
 - **Cloud-hosted service** — All state, logs, worktrees, and artifacts live on your local filesystem. The only outbound requests are to the LLM APIs and agent runtimes you configure.

@@ -34,7 +34,7 @@ Each session runs in an isolated git worktree with its own branch. For architect
 | **Python 3.11+** | Check with `python3 --version` |
 | **uv** | Python package manager ([install](https://docs.astral.sh/uv/getting-started/installation/)) |
 | **Git** | `git --version` |
-| **Claude Code CLI** | Must be installed and authenticated — see step 2 below |
+| **Claude Code CLI** | Default agent runtime — must be installed and authenticated (see step 2) |
 | **Telegram account** | For the bot and supergroup setup |
 
 ## Setup from Scratch
@@ -125,17 +125,14 @@ Edit `.env` and set the required values:
 AFK_TELEGRAM_BOT_TOKEN="your-bot-token-here"
 AFK_TELEGRAM_GROUP_ID="-100xxxxxxxxxx"
 
-# Optional — enables voice messages (Whisper) and Deep Research agent
-# AFK_OPENAI_API_KEY="sk-..."
-
 # Optional — base directory for /project init
 # AFK_BASE_PATH="~/workspace"
 
 # Optional — web dashboard port (default: 7777)
 # AFK_DASHBOARD_PORT="7777"
 
-# Optional — default agent runtime: claude (default), codex, or deep-research
-# AFK_AGENT="claude"
+# Optional (experimental) — enables voice messages (Whisper) and Deep Research agent
+# AFK_OPENAI_API_KEY="sk-..."
 ```
 
 ### Step 4. Run
@@ -182,8 +179,6 @@ Before starting a session, register the project:
 ```
 /new myapp                        # Start session (project must be registered)
 /new myapp -v                     # Verbose — show full tool input/output
-/new myapp --agent codex          # Use Codex for this session only
-/new myapp --agent deep-research  # Use OpenAI Deep Research
 /new myapp --template nextjs      # Apply workspace template
 ```
 
@@ -223,31 +218,13 @@ Requires [cloudflared](https://developers.cloudflare.com/cloudflare-one/connecti
 /complete          # Commit, merge branch into main, clean up (session topic)
 ```
 
-### Deep Research
-
-Start a session with the Deep Research agent to get web-researched reports delivered as files:
-
-```
-/project init myresearch              # Register project
-/new myresearch --agent deep-research # Start Deep Research session
-```
-
-Then send your research query in the session topic. The agent submits a background research request, writes `report.md` to the worktree, auto-commits, and delivers the file via Telegram.
-
-```
-/new myresearch --template research --agent deep-research  # With scaffold
-```
-
 ### Workspace Templates
 
-Templates provide pre-configured scaffolds and agent context for different work types:
+Templates provide pre-configured scaffolds and agent context:
 
 ```
 /template list                     # List available templates
 /new myapp --template nextjs       # Next.js 15 project scaffold
-/new myapp --template research     # Research report scaffold
-/new myapp --template writing      # Writing/content scaffold
-/new myapp --template coding       # Generic coding scaffold
 ```
 
 ## Web Control Plane
@@ -284,10 +261,15 @@ GET  /api/logs                                  # Daemon log tail
 |---|---|---|---|
 | `AFK_TELEGRAM_BOT_TOKEN` | Yes | — | Telegram bot token from @BotFather |
 | `AFK_TELEGRAM_GROUP_ID` | Yes | — | Supergroup chat ID (negative number) |
-| `AFK_OPENAI_API_KEY` | No | — | Enables voice transcription (Whisper) and Deep Research agent. Also reads `OPENAI_API_KEY` |
-| `AFK_AGENT` | No | `claude` | Default agent runtime: `claude`, `codex`, or `deep-research` |
 | `AFK_BASE_PATH` | No | — | Base directory for `/project init` |
 | `AFK_DASHBOARD_PORT` | No | `7777` | Web control plane port |
+
+**Experimental:**
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `AFK_OPENAI_API_KEY` | No | — | Enables voice transcription (Whisper) and Deep Research agent. Also reads `OPENAI_API_KEY` |
+| `AFK_AGENT` | No | `claude` | Agent runtime: `claude`, `codex`, or `deep-research` |
 | `AFK_DEEP_RESEARCH_MODEL` | No | `o4-mini-deep-research` | OpenAI Deep Research model |
 | `AFK_DEEP_RESEARCH_MAX_TOOL_CALLS` | No | — | Max tool calls for Deep Research cost control |
 

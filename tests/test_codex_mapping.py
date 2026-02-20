@@ -1,7 +1,7 @@
 """Tests for Codex item-to-content_blocks mapping."""
 from __future__ import annotations
 
-from afk.adapters.codex.agent import _map_item_to_content_blocks
+from afk.adapters.experimental.codex.agent import _map_item_to_content_blocks
 
 
 class TestMapItemToContentBlocks:

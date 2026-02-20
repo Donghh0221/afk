@@ -14,7 +14,7 @@ from afk.adapters.claude_code.commit_helper import generate_commit_message
 from afk.ports.agent import AgentPort
 from afk.adapters.telegram.config import TelegramConfig
 from afk.adapters.telegram.renderer import EventRenderer
-from afk.adapters.whisper.stt import WhisperAPISTT
+from afk.adapters.experimental.whisper.stt import WhisperAPISTT
 from afk.capabilities.tunnel.tunnel import TunnelCapability
 from afk.core.commands import Commands
 from afk.core.events import EventBus
@@ -74,7 +74,7 @@ async def main() -> None:
     agent_type = os.environ.get("AFK_AGENT", "claude").lower()
     agent_registry: dict[str, Callable[[], AgentPort]] = {"claude": ClaudeCodeAgent}
     if agent_type == "codex":
-        from afk.adapters.codex.agent import CodexAgent
+        from afk.adapters.experimental.codex.agent import CodexAgent
         agent_registry["codex"] = CodexAgent
         logger.info("Agent runtime: OpenAI Codex CLI (default)")
     else:
@@ -82,7 +82,7 @@ async def main() -> None:
 
     # Deep Research agent (requires OpenAI API key)
     if openai_api_key:
-        from afk.adapters.deep_research.agent import DeepResearchAgent
+        from afk.adapters.experimental.deep_research.agent import DeepResearchAgent
         dr_model = os.environ.get("AFK_DEEP_RESEARCH_MODEL", "o4-mini-deep-research")
         dr_max_str = os.environ.get("AFK_DEEP_RESEARCH_MAX_TOOL_CALLS", "")
         dr_max = int(dr_max_str) if dr_max_str else None
