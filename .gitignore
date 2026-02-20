@@ -3,6 +3,7 @@ __pycache__/
 .env
 afk/data/*.json
 afk/data/logs/
+afk/data/messages/
 venv/
 .venv/
 .afk-worktrees/
