@@ -50,6 +50,7 @@ class Session:
     worktree_path: str  # isolated worktree directory for this session
     channel_id: str
     agent: AgentPort
+    agent_name: str = "claude"
     agent_session_id: str | None = None
     state: str = "idle"  # idle | running | waiting_permission | stopped
     verbose: bool = False
@@ -173,6 +174,7 @@ class SessionManager:
             channel_id = await self._messenger.create_session_channel(session_name)
 
         # Start agent process in the worktree directory
+        resolved_agent_name = agent_name or self._default_agent
         agent = self._create_agent(agent_name)
         await agent.start(worktree_path, stderr_log_path=session_logger.stderr_log_path)
 
@@ -183,6 +185,7 @@ class SessionManager:
             worktree_path=worktree_path,
             channel_id=channel_id,
             agent=agent,
+            agent_name=resolved_agent_name,
             managed_channel=managed_channel,
             template_name=template.name if template else None,
             _session_logger=session_logger,
@@ -538,6 +541,7 @@ class SessionManager:
             managed_channel = info.get("managed_channel", True)
             template_name = info.get("template_name")
             created_at = info.get("created_at", time.time())
+            agent_name = info.get("agent_name", self._default_agent)
 
             if not Path(worktree_path).is_dir():
                 logger.warning(
@@ -568,7 +572,7 @@ class SessionManager:
                 session_logger.start()
                 session_logger.logger.info("Session recovered from previous run")
 
-                agent = self._create_agent()
+                agent = self._create_agent(agent_name)
                 await agent.start(
                     worktree_path, agent_session_id,
                     stderr_log_path=session_logger.stderr_log_path,
@@ -581,6 +585,7 @@ class SessionManager:
                     worktree_path=worktree_path,
                     channel_id=channel_id,
                     agent=agent,
+                    agent_name=agent_name,
                     agent_session_id=agent_session_id,
                     verbose=verbose,
                     managed_channel=managed_channel,
@@ -662,6 +667,7 @@ class SessionManager:
                 "managed_channel": s.managed_channel,
                 "template_name": s.template_name,
                 "created_at": s.created_at,
+                "agent_name": s.agent_name,
             }
         path = self._data_dir / "sessions.json"
         path.parent.mkdir(parents=True, exist_ok=True)

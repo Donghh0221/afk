@@ -229,11 +229,12 @@ class Orchestrator:
                 template=template,
             )
             verbose_label = " (verbose)" if verbose else ""
+            agent_label = session.agent_name
             topic_link = self._messenger.get_channel_link(session.channel_id)
             await self._messenger.send_message(
                 channel_id,
                 f"✅ Session created: {session.name}{verbose_label}\n"
-                f"Send messages in the topic to talk to Claude Code.",
+                f"Send messages in the topic to talk to {agent_label}.",
                 link_url=topic_link,
                 link_label=f"Open {session.name}",
             )
@@ -245,8 +246,9 @@ class Orchestrator:
                 f"🚀 Session started: {session.name}{verbose_label}\n"
                 f"📁 Project: {project_name} ({project_path})\n"
                 f"🌿 Branch: afk/{session.name}\n"
-                f"📂 Worktree: {session.worktree_path}\n\n"
-                f"Messages will be forwarded to Claude Code.",
+                f"📂 Worktree: {session.worktree_path}\n"
+                f"🤖 Agent: {agent_label}\n\n"
+                f"Messages will be forwarded to {agent_label}.",
             )
         except (ValueError, RuntimeError) as e:
             await self._messenger.send_message(
