@@ -19,12 +19,10 @@ For these people, the terminal is a bottleneck. AFK removes that bottleneck.
 ## Core Principles
 
 - **File-based deliverables**: One path = one workspace = one project. All output is files — code, documents, reports, data
-- **Input is voice, output is text**: Optimized for human I/O bandwidth
 - **Messenger is the control plane**: Starting with Telegram (MVP), control from anywhere
 - **Session = isolated workspace**: Session isolation, concurrent multitasking
 - **Agent-agnostic**: AgentPort abstraction allows swapping Claude Code / Codex / any agent
 - **Control-plane-agnostic**: ControlPlanePort abstraction allows swapping Telegram / Slack / CLI / native app
-- **STT-agnostic**: STTPort abstraction allows swapping Whisper local / API / Deepgram
 - **Always-on**: Runs as a daemon on any local machine, accessible from any device
 
 ## Deployment Architecture
@@ -83,7 +81,7 @@ The current architecture (path → workspace → git worktree → agent session)
 | **Research** | Claude w/ web search | Market analysis, competitor reports, summaries |
 | **Data Analysis** | Claude w/ code execution | Charts, CSV transforms, report files |
 
-All workspace types share the same core: a folder where files accumulate, tracked by git, managed through Telegram.
+All workspace types share the same core: a folder where files accumulate, tracked by git, managed through control plane.
 
 What's needed: workspace templates and capabilities — two ecosystem layers that make AFK extensible.
 
@@ -150,7 +148,7 @@ Templates define what a workspace looks like when created with `/new`. This is A
 
 ## Roadmap
 
-### Phase 1: Daily-drivable (weeks)
+### Phase 1: Daily-drivable
 - Agent crash auto-restart
 - Telegram reconnection recovery
 - Session state restore after daemon restart
@@ -159,20 +157,20 @@ Templates define what a workspace looks like when created with `/new`. This is A
 - Core unit tests (commands, session_manager, events)
 - Better error messages
 
-### Phase 2: Work-specific features (1-2 months)
+### Phase 2: Work-specific features
 - Multi-agent orchestration (cross-session coordination)
 - Deliverable review automation (`diff_reviewer` capability)
 - Cost management (`cost_guard` capability)
 - Auto-test on code changes (`test_runner` capability)
 
-### Phase 3: Workspace expansion + ecosystem (3-6 months)
+### Phase 3: Workspace expansion + ecosystem
 - Writing / research / data analysis workspace types
 - Workspace template system + built-in templates
 - Agent runtime expansion (Aider, etc. via AgentPort adapters)
 - Control plane expansion (Slack, Discord via ControlPlanePort)
 - Capability plugin architecture + distribution
 
-### Phase 4: Community ecosystem (stars 500+)
+### Phase 4: Community ecosystem
 - Capability registry (`afk capability install <name>`)
 - Template registry (`afk template install <name>`)
 - Community-contributed capabilities and templates
@@ -181,5 +179,3 @@ Templates define what a workspace looks like when created with `/new`. This is A
 
 - General-purpose AI assistant (email, calendar, payments) — AFK produces file-based deliverables, not actions
 - Custom LLM integration — AFK orchestrates existing agent runtimes, not replaces them
-- Mobile app — Telegram already serves as the mobile client
-- Premature feature expansion — Phase 1 must be solid before anything else matters

@@ -7,3 +7,4 @@ venv/
 .venv/
 .afk-worktrees/
 .DS_Store
+.idea

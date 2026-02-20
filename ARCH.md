@@ -4,7 +4,6 @@
 
 - **Agent-agnostic**: Core logic depends only on the `AgentPort` interface. Swappable between Claude Code/Codex/any agent runtime.
 - **Control-plane-agnostic**: Core logic depends only on the `ControlPlanePort` interface. Swappable between Telegram/Slack/CLI/native app.
-- **STT-agnostic**: Speech recognition abstracted via `STTPort`. Swappable between Whisper API/local/Deepgram.
 - **Event-driven**: All agent output flows as typed events through an `EventBus`. Control planes subscribe and render.
 - **Single entry point**: All control planes call the `Commands` API — never session manager or agent directly.
 - **Always-on daemon**: Runs 24/7 as a background daemon. Accessible from any device.
@@ -77,9 +76,6 @@ afk/
 ├── main.py                          # Entry point, component wiring, daemon startup/shutdown
 │
 ├── ports/                           # Abstract interfaces (Protocol definitions only)
-│   ├── agent.py                     # AgentPort protocol
-│   ├── control_plane.py             # ControlPlanePort protocol
-│   └── stt.py                       # STTPort protocol
 │
 ├── core/                            # Business logic (agent/messenger-independent)
 │   ├── commands.py                  # Commands API — single entry point for all control planes
@@ -89,20 +85,8 @@ afk/
 │   └── git_worktree.py              # Git worktree/branch operations
 │
 ├── adapters/                        # Concrete implementations of ports
-│   ├── claude_code/
-│   │   ├── agent.py                 # ClaudeCodeAgent (implements AgentPort)
-│   │   └── commit_helper.py         # AI commit message generation via Claude CLI
-│   ├── telegram/
-│   │   ├── config.py                # TelegramConfig (bot_token, group_id)
-│   │   └── renderer.py              # EventRenderer: EventBus events → Telegram messages
-│   ├── whisper/
-│   │   └── stt.py                   # WhisperAPISTT (implements STTPort)
-│   └── web/
-│       └── server.py                # WebControlPlane (REST API + SSE + browser UI)
-│
+
 ├── capabilities/                    # Pluggable session-level features
-│   └── tunnel/
-│       └── tunnel.py                # TunnelCapability (dev server + cloudflared tunneling)
 │
 ├── storage/
 │   ├── project_store.py             # Project registration CRUD (JSON file)
@@ -152,15 +136,6 @@ class ControlPlanePort(Protocol):
     async def download_voice(self, file_id: str) -> str: ...
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
-```
-
-#### STTPort (`ports/stt.py`)
-
-Speech-to-text abstract interface. STT engine swappable independently from control plane.
-
-```python
-class STTPort(Protocol):
-    async def transcribe(self, audio_path: str) -> str: ...
 ```
 
 ### 1. EventBus + Events (`core/events.py`)

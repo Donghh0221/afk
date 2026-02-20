@@ -22,7 +22,7 @@ AFK ("Away From Keyboard") is a Python daemon that serves as a remote control pl
 
 3-layer hexagonal (port-adapter) architecture. **These rules must be followed strictly:**
 
-1. `core/` never imports from `adapters/`, `messenger/`, `capabilities/`, or any external tool (Telegram, Claude, cloudflared)
+1. `core/` never imports from `adapters/`, `capabilities/`, or any external tool (Telegram, Claude, cloudflared)
 2. `ports/` contains only Protocol definitions — no implementations
 3. `adapters/` contains all external integrations
 4. `capabilities/` contains pluggable session-level features

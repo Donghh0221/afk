@@ -11,7 +11,7 @@ AFK breaks that loop:
 - **Work from anywhere.** Send a voice message from your phone while commuting. The agent runs on your server back home.
 - **Run multiple sessions.** Each Telegram forum topic is an isolated agent session. Start one for frontend, another for backend, check in when you want.
 - **Stay in control without being present.** Permission requests arrive as push notifications with approve/deny buttons. No terminal window required.
-- **See what's happening.** A built-in web dashboard shows live session activity, message history, and daemon logs — all at `localhost:7777`.
+- **See what's happening.** A built-in web control plane shows live session activity, message history, and daemon logs — all at `localhost:7777`.
 - **Verify remotely.** Start a dev server tunnel with `/tunnel` and preview your app from your phone.
 
 The target user is a solo entrepreneur, freelancer, or one-person agency who uses AI to produce real deliverables — code, documents, research reports. AFK makes that workflow mobile.
@@ -33,9 +33,9 @@ graph LR
         SesB["Session B → Agent (Claude Code)"]
         EB["EventBus (typed events)"]
         Cap["Capabilities (tunnel, ...)"]
-        Dash["Dashboard (localhost:7777)"]
+        Web["Web Control Plane (localhost:7777)"]
 
-        Daemon --- CP & API & SM & EB & Cap & Dash
+        Daemon --- CP & API & SM & EB & Cap & Web
         SM --- SesA & SesB
     end
 
@@ -102,11 +102,11 @@ uv run afk
 python -m afk.main
 ```
 
-AFK starts the Telegram bot and the dashboard server. You'll see:
+AFK starts the Telegram bot and the web control plane. You'll see:
 
 ```
 AFK is running. Press Ctrl+C to stop.
-Dashboard running at http://localhost:7777
+Web control plane running at http://localhost:7777
 ```
 
 ### 5. Run as a Daemon (optional)
@@ -175,13 +175,14 @@ Start a dev server tunnel from the session topic:
 /complete          # Merge branch into main and clean up (session topic)
 ```
 
-### Dashboard
+### Web Control Plane
 
-Open `http://localhost:7777` in a browser to see:
+Open `http://localhost:7777` in a browser to:
 
-- Active sessions with live state indicators
-- Per-session message history (user prompts, assistant responses, tool calls)
-- Daemon log viewer
+- Create and manage sessions
+- Send prompts and approve permissions
+- View per-session message history and daemon logs
+- Stream live agent events via SSE
 
 ## Architecture
 
