@@ -126,25 +126,25 @@ All interaction happens in your Telegram supergroup.
 
 ### Start a Session
 
-가장 간단한 방법 — `AFK_BASE_PATH`만 설정해두면 프로젝트 등록 없이 바로 시작:
+The simplest way — just set `AFK_BASE_PATH` and start without registering projects:
 
 ```
-/new myapp                        # $AFK_BASE_PATH/myapp 에서 세션 시작
+/new myapp                        # Start a session from $AFK_BASE_PATH/myapp
 ```
 
-이때 일어나는 일:
+What happens:
 
-1. `myapp`이 이미 등록된 프로젝트면 → 그대로 사용
-2. `$AFK_BASE_PATH/myapp` 디렉토리가 있으면 → 자동 등록 후 세션 시작 (git repo가 아니면 `git init`도 자동)
-3. 디렉토리가 없으면 → 생성 + `git init` + 자동 등록 + 세션 시작
+1. If `myapp` is already a registered project → use it as-is
+2. If `$AFK_BASE_PATH/myapp` directory exists → auto-register and start session (runs `git init` if not a git repo)
+3. If the directory doesn't exist → create it + `git init` + auto-register + start session
 
 ```
-/new myapp -v                     # verbose — 도구 입출력 전체 표시
-/new myapp --agent codex          # 이 세션만 Codex로 실행
-/new myapp -v -a codex            # 둘 다 가능
+/new myapp -v                     # verbose — show full tool input/output
+/new myapp --agent codex          # use Codex for this session only
+/new myapp -v -a codex            # both flags work together
 ```
 
-수동으로 프로젝트를 관리하고 싶다면:
+To manage projects manually:
 
 ```
 /project add ~/projects/myapp myapp
@@ -152,7 +152,7 @@ All interaction happens in your Telegram supergroup.
 /project remove myapp
 ```
 
-> `AFK_BASE_PATH` 없이 `/new`을 쓰려면 반드시 `/project add`로 먼저 등록해야 합니다.
+> Without `AFK_BASE_PATH`, you must register projects with `/project add` before using `/new`.
 
 This creates a new forum topic (`myapp-260218-143022`) with an isolated git worktree and starts an agent subprocess.
 
