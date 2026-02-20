@@ -62,14 +62,6 @@ graph LR
 
 ## Setup from Scratch
 
-### Quick Install (Automated)
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Donghh0221/afk/main/install.sh)
-```
-
-This script checks prerequisites, installs dependencies, creates `.env`, and optionally sets up a launchd daemon. If you prefer manual setup, follow the steps below.
-
 ### Step 1. Create Telegram Bot & Supergroup
 
 **Create a bot:**
@@ -111,7 +103,19 @@ claude --version
 
 Make sure `claude` is available in your PATH. AFK launches it in headless mode (`--input-format stream-json --output-format stream-json`) per session.
 
-### Step 3. Clone & Install AFK
+### Step 3. Install AFK
+
+Choose one of the two options below:
+
+#### Option A. Quick Install (Automated)
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Donghh0221/afk/main/install.sh)
+```
+
+The script checks prerequisites, clones the repo, installs dependencies, creates `.env` (prompts for the bot token and group ID from Step 1), and optionally sets up a launchd daemon. After it finishes, skip to **Step 4. Run**.
+
+#### Option B. Manual Install
 
 ```bash
 git clone https://github.com/Donghh0221/afk.git
@@ -131,9 +135,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 pip install -e .
 ```
 
-### Step 4. Configure Environment
+Then create the `.env` file:
 
-Create a `.env` file in the project root:
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set the required values:
 
 ```bash
 # Required
@@ -141,19 +149,19 @@ AFK_TELEGRAM_BOT_TOKEN="your-bot-token-here"
 AFK_TELEGRAM_GROUP_ID="-100xxxxxxxxxx"
 
 # Optional — enables voice messages (Whisper) and Deep Research agent
-AFK_OPENAI_API_KEY="sk-..."
+# AFK_OPENAI_API_KEY="sk-..."
 
 # Optional — auto-resolve project paths with /new
-AFK_BASE_PATH="~/workspace"
+# AFK_BASE_PATH="~/workspace"
 
 # Optional — web dashboard port (default: 7777)
-AFK_DASHBOARD_PORT="7777"
+# AFK_DASHBOARD_PORT="7777"
 
 # Optional — default agent runtime: claude (default), codex, or deep-research
-AFK_AGENT="claude"
+# AFK_AGENT="claude"
 ```
 
-### Step 5. Run
+### Step 4. Run
 
 ```bash
 uv run afk
@@ -168,7 +176,7 @@ Web control plane running at http://localhost:7777
 
 AFK is now listening for Telegram messages and serving the web dashboard.
 
-### Step 6. Verify
+### Step 5. Verify
 
 1. Open Telegram → go to your supergroup
 2. Send `/project add ~/projects/myapp MyApp` (register a project)
