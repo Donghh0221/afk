@@ -260,6 +260,16 @@ async def _handle_add_project(request: web.Request) -> web.Response:
     return web.json_response({"ok": ok, "message": msg})
 
 
+async def _handle_project_info(request: web.Request) -> web.Response:
+    """GET /api/projects/{name}/info"""
+    cmd: Commands = request.app["cmd"]
+    name = request.match_info["name"]
+    info = cmd.cmd_project_info(name)
+    if not info:
+        return web.json_response({"error": "project not found"}, status=404)
+    return web.json_response(info)
+
+
 async def _handle_remove_project(request: web.Request) -> web.Response:
     """DELETE /api/projects/{name}"""
     cmd: Commands = request.app["cmd"]
@@ -408,6 +418,7 @@ def _build_app(
     # Projects
     app.router.add_get("/api/projects", _handle_list_projects)
     app.router.add_post("/api/projects", _handle_add_project)
+    app.router.add_get("/api/projects/{name}/info", _handle_project_info)
     app.router.add_delete("/api/projects/{name}", _handle_remove_project)
 
     # SSE + logs

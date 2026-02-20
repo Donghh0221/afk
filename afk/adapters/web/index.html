@@ -235,6 +235,51 @@ header h1 { font-size: 14px; font-weight: 600; }
   font-size: 14px;
 }
 
+/* Project info panel */
+.project-info {
+  flex: 1;
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+.project-info h3 {
+  font-size: 16px;
+  margin-bottom: 16px;
+}
+.project-info .info-row {
+  display: flex;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.project-info .info-label {
+  color: var(--text-muted);
+  min-width: 100px;
+  flex-shrink: 0;
+}
+.project-info .info-value {
+  word-break: break-all;
+}
+.project-info .session-list-detail {
+  margin-top: 16px;
+  list-style: none;
+}
+.project-info .session-list-detail li {
+  padding: 8px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.project-info .session-list-detail li:hover { background: var(--bg-hover); }
+.project-info .session-detail-agent {
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
 /* Modal */
 .modal-overlay {
   display: none;
@@ -379,8 +424,59 @@ function renderProjects() {
     return;
   }
   el.innerHTML = names.map(n =>
-    `<li class="project-item" title="${projects[n].path}">${n}</li>`
+    `<li class="project-item" title="${projects[n].path}" onclick="showProjectInfo('${escapeHtml(n)}')">${n}</li>`
   ).join("");
+}
+
+async function showProjectInfo(name) {
+  activeChannelId = null;
+  renderSessions();
+  const main = document.getElementById("main-area");
+  main.innerHTML = '<div class="empty-state">Loading...</div>';
+
+  const info = await api("GET", `/api/projects/${encodeURIComponent(name)}/info`);
+  if (info.error) {
+    main.innerHTML = `<div class="empty-state">${escapeHtml(info.error)}</div>`;
+    return;
+  }
+
+  let sessionsHtml = "";
+  if (info.sessions && info.sessions.length) {
+    const items = info.sessions.map(s => {
+      const stateClass = s.state || "idle";
+      return `<li onclick="selectSession('${s.channel_id}')">
+        <span class="state-dot ${stateClass}"></span>
+        <span>${escapeHtml(s.name)}</span>
+        <span class="session-detail-agent">${escapeHtml(s.agent_name)}</span>
+      </li>`;
+    }).join("");
+    sessionsHtml = `
+      <div class="info-row" style="margin-top:20px">
+        <span class="info-label" style="font-weight:600;color:var(--text)">Active Sessions (${info.sessions.length})</span>
+      </div>
+      <ul class="session-list-detail">${items}</ul>`;
+  } else {
+    sessionsHtml = `
+      <div class="info-row" style="margin-top:20px">
+        <span class="info-label">Sessions</span>
+        <span class="info-value" style="color:var(--text-muted)">No active sessions</span>
+      </div>`;
+  }
+
+  const registered = info.created_at ? new Date(info.created_at).toLocaleString() : "—";
+  main.innerHTML = `
+    <div class="project-info">
+      <h3>${escapeHtml(info.name)}</h3>
+      <div class="info-row">
+        <span class="info-label">Path</span>
+        <span class="info-value">${escapeHtml(info.path)}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Registered</span>
+        <span class="info-value">${registered}</span>
+      </div>
+      ${sessionsHtml}
+    </div>`;
 }
 
 function toggleAddProject() {
