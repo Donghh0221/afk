@@ -116,6 +116,7 @@ async def _handle_new_session(request: web.Request) -> web.Response:
     body = await request.json()
     project = body.get("project", "").strip()
     verbose = body.get("verbose", False)
+    agent = body.get("agent") or None
 
     if not project:
         return web.json_response({"error": "project is required"}, status=400)
@@ -123,7 +124,7 @@ async def _handle_new_session(request: web.Request) -> web.Response:
     channel_id = _make_channel_id()
     try:
         session = await cmd.cmd_new_session(
-            project, verbose=verbose, channel_id=channel_id,
+            project, verbose=verbose, channel_id=channel_id, agent=agent,
         )
         return web.json_response({
             "channel_id": session.channel_id,

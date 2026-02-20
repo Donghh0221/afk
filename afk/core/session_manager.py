@@ -71,6 +71,8 @@ class SessionManager:
         event_bus: EventBus | None = None,
         agent_factory: Callable[[], AgentPort] | None = None,
         commit_message_fn: CommitMessageFn | None = None,
+        agent_registry: dict[str, Callable[[], AgentPort]] | None = None,
+        default_agent: str = "claude",
     ) -> None:
         self._messenger = messenger
         self._sessions: dict[str, Session] = {}  # channel_id -> Session
@@ -79,6 +81,8 @@ class SessionManager:
         self._agent_factory = agent_factory
         self._commit_message_fn = commit_message_fn
         self._cleanup_callbacks: list[SessionCleanupFn] = []
+        self._agent_registry = agent_registry or {}
+        self._default_agent = default_agent
 
     def add_cleanup_callback(self, callback: SessionCleanupFn) -> None:
         """Register a cleanup callback called when a session stops/completes."""
@@ -92,15 +96,23 @@ class SessionManager:
             except Exception:
                 logger.exception("Cleanup callback failed for %s", channel_id)
 
-    def _create_agent(self) -> AgentPort:
-        """Create a new agent instance using the configured factory."""
-        if self._agent_factory is None:
-            raise RuntimeError("No agent_factory configured")
-        return self._agent_factory()
+    def _create_agent(self, agent_name: str | None = None) -> AgentPort:
+        """Create a new agent instance.
+
+        Looks up *agent_name* in the registry first, then falls back to the
+        default agent name, then to the legacy ``agent_factory``.
+        """
+        name = agent_name or self._default_agent
+        if name in self._agent_registry:
+            return self._agent_registry[name]()
+        if self._agent_factory is not None:
+            return self._agent_factory()
+        raise RuntimeError(f"No agent factory for '{name}'")
 
     async def create_session(
         self, project_name: str, project_path: str,
         channel_id: str | None = None,
+        agent_name: str | None = None,
     ) -> Session:
         """Create new session: git worktree + forum topic + agent process.
 
@@ -152,7 +164,7 @@ class SessionManager:
             channel_id = await self._messenger.create_session_channel(session_name)
 
         # Start agent process in the worktree directory
-        agent = self._create_agent()
+        agent = self._create_agent(agent_name)
         await agent.start(worktree_path, stderr_log_path=session_logger.stderr_log_path)
 
         session = Session(

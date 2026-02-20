@@ -8,8 +8,10 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from afk.core.git_worktree import git_init, is_git_repo
 from afk.core.session_manager import SessionManager, Session
 from afk.storage.message_store import MessageStore
 from afk.storage.project_store import ProjectStore
@@ -64,12 +66,14 @@ class Commands:
         message_store: MessageStore | None = None,
         stt: STTPort | None = None,
         tunnel: TunnelCapability | None = None,
+        base_path: str | None = None,
     ) -> None:
         self._sm = session_manager
         self._ps = project_store
         self._ms = message_store or MessageStore()
         self._stt = stt
         self._tunnel = tunnel
+        self._base_path = base_path
 
     @property
     def message_store(self) -> MessageStore:
@@ -111,21 +115,50 @@ class Commands:
     async def cmd_new_session(
         self, project_name: str, verbose: bool = False,
         channel_id: str | None = None,
+        agent: str | None = None,
     ) -> Session:
         """Create a new session. Raises RuntimeError on failure.
 
+        Smart project resolution:
+        1. Already registered in ProjectStore → use it.
+        2. ``base_path/{name}`` exists → auto-register (git init if needed).
+        3. ``base_path`` set but dir missing → mkdir + git init + register.
+        4. No ``base_path`` and not registered → error.
+
         *channel_id* — if provided, skip messenger channel creation
         (used by the web control plane).
+        *agent* — override agent runtime for this session.
         """
         project = self._ps.get(project_name)
+
+        if not project and self._base_path:
+            project_dir = Path(self._base_path) / project_name
+            if project_dir.is_dir():
+                # Existing directory — auto-register (git init if needed)
+                if not await is_git_repo(str(project_dir)):
+                    await git_init(str(project_dir))
+                self._ps.add(project_name, str(project_dir))
+                project = self._ps.get(project_name)
+            else:
+                # Create new project directory
+                project_dir.mkdir(parents=True, exist_ok=True)
+                await git_init(str(project_dir))
+                self._ps.add(project_name, str(project_dir))
+                project = self._ps.get(project_name)
+
         if not project:
+            hint = (
+                " Set AFK_BASE_PATH to auto-create projects."
+                if not self._base_path else ""
+            )
             raise ValueError(
                 f"Unregistered project: {project_name}\n"
-                "Check /project list for available projects."
+                f"Check /project list for available projects.{hint}"
             )
 
         session = await self._sm.create_session(
-            project_name, project["path"], channel_id=channel_id,
+            project_name, project["path"],
+            channel_id=channel_id, agent_name=agent,
         )
         session.verbose = verbose
         return session

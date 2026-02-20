@@ -21,6 +21,19 @@ async def _run_git(args: list[str], cwd: str) -> tuple[int, str, str]:
     return proc.returncode, stdout.decode().strip(), stderr.decode().strip()
 
 
+async def git_init(project_path: str) -> None:
+    """Initialize a new git repository with an initial empty commit."""
+    code, _, stderr = await _run_git(["init"], cwd=project_path)
+    if code != 0:
+        raise RuntimeError(f"git init failed: {stderr}")
+    code, _, stderr = await _run_git(
+        ["commit", "--allow-empty", "-m", "Initial commit"],
+        cwd=project_path,
+    )
+    if code != 0:
+        raise RuntimeError(f"Initial commit failed: {stderr}")
+
+
 async def is_git_repo(project_path: str) -> bool:
     """Return True if project_path is inside a git repository."""
     code, _, _ = await _run_git(["rev-parse", "--git-dir"], cwd=project_path)

@@ -88,8 +88,10 @@ Create a `.env` file or export these variables:
 export AFK_TELEGRAM_BOT_TOKEN="your-bot-token-here"
 export AFK_TELEGRAM_GROUP_ID="-100xxxxxxxxxx"
 # Optional
+export AFK_BASE_PATH="~/workspace"    # Smart /new — auto-creates projects here
 export AFK_DASHBOARD_PORT="7777"
-export AFK_OPENAI_API_KEY="sk-..."  # Enables voice message transcription
+export AFK_AGENT="claude"             # Default agent runtime (claude or codex)
+export AFK_OPENAI_API_KEY="sk-..."    # Enables voice message transcription
 ```
 
 ### 4. Run
@@ -122,24 +124,35 @@ launchctl load ~/Library/LaunchAgents/com.afk.daemon.plist
 
 All interaction happens in your Telegram supergroup.
 
-### Register a Project
-
-In the **General** topic:
-
-```
-/project add ~/projects/myapp MyApp
-/project list
-/project remove MyApp
-```
-
 ### Start a Session
 
-In the **General** topic:
+가장 간단한 방법 — `AFK_BASE_PATH`만 설정해두면 프로젝트 등록 없이 바로 시작:
 
 ```
-/new MyApp
-/new MyApp -v          # verbose mode — shows full tool input/output
+/new myapp                        # $AFK_BASE_PATH/myapp 에서 세션 시작
 ```
+
+이때 일어나는 일:
+
+1. `myapp`이 이미 등록된 프로젝트면 → 그대로 사용
+2. `$AFK_BASE_PATH/myapp` 디렉토리가 있으면 → 자동 등록 후 세션 시작 (git repo가 아니면 `git init`도 자동)
+3. 디렉토리가 없으면 → 생성 + `git init` + 자동 등록 + 세션 시작
+
+```
+/new myapp -v                     # verbose — 도구 입출력 전체 표시
+/new myapp --agent codex          # 이 세션만 Codex로 실행
+/new myapp -v -a codex            # 둘 다 가능
+```
+
+수동으로 프로젝트를 관리하고 싶다면:
+
+```
+/project add ~/projects/myapp myapp
+/project list
+/project remove myapp
+```
+
+> `AFK_BASE_PATH` 없이 `/new`을 쓰려면 반드시 `/project add`로 먼저 등록해야 합니다.
 
 This creates a new forum topic (`myapp-260218-143022`) with an isolated git worktree and starts an agent subprocess.
 

@@ -70,21 +70,28 @@ async def main() -> None:
 
     # Select agent runtime via AFK_AGENT env var (default: claude)
     agent_type = os.environ.get("AFK_AGENT", "claude").lower()
-    agent_factory: type[AgentPort]
+    agent_registry: dict[str, type[AgentPort]] = {"claude": ClaudeCodeAgent}
     if agent_type == "codex":
         from afk.adapters.codex.agent import CodexAgent
-        agent_factory = CodexAgent
-        logger.info("Agent runtime: OpenAI Codex CLI")
+        agent_registry["codex"] = CodexAgent
+        logger.info("Agent runtime: OpenAI Codex CLI (default)")
     else:
-        agent_factory = ClaudeCodeAgent
-        logger.info("Agent runtime: Claude Code CLI")
+        logger.info("Agent runtime: Claude Code CLI (default)")
+
+    # AFK_BASE_PATH — enables smart /new auto-resolution
+    base_path = os.environ.get("AFK_BASE_PATH", "")
+    if base_path:
+        base_path = str(Path(base_path).expanduser().resolve())
+        logger.info("Base path for projects: %s", base_path)
 
     # Session manager (publishes events via EventBus)
     session_manager = SessionManager(
         messenger, data_dir,
         event_bus=event_bus,
-        agent_factory=agent_factory,
+        agent_factory=agent_registry.get(agent_type, ClaudeCodeAgent),
         commit_message_fn=generate_commit_message,
+        agent_registry=agent_registry,
+        default_agent=agent_type,
     )
 
     # Initialize STT (optional — voice support requires OpenAI API key)
@@ -110,6 +117,7 @@ async def main() -> None:
         session_manager, project_store, message_store,
         stt=stt,
         tunnel=tunnel_capability,
+        base_path=base_path or None,
     )
 
     # Event renderer — subscribes to EventBus, renders to messenger

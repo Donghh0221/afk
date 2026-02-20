@@ -179,19 +179,27 @@ class Orchestrator:
     async def _handle_new_command(
         self, channel_id: str, args: list[str]
     ) -> None:
-        """/new <project_name> [-v|--verbose] — create a new session."""
+        """/new <project_name> [-v|--verbose] [--agent <name>] — create a new session."""
+        usage = "Usage: /new <project_name> [-v|--verbose] [--agent <name>]"
         if not args:
-            await self._messenger.send_message(
-                channel_id, "Usage: /new <project_name> [-v|--verbose]"
-            )
+            await self._messenger.send_message(channel_id, usage)
             return
 
         verbose = "--verbose" in args or "-v" in args
-        positional = [a for a in args if not a.startswith("-")]
+
+        # Extract --agent / -a value
+        agent: str | None = None
+        filtered_args: list[str] = []
+        it = iter(args)
+        for a in it:
+            if a in ("--agent", "-a"):
+                agent = next(it, None)
+            else:
+                filtered_args.append(a)
+
+        positional = [a for a in filtered_args if not a.startswith("-")]
         if not positional:
-            await self._messenger.send_message(
-                channel_id, "Usage: /new <project_name> [-v|--verbose]"
-            )
+            await self._messenger.send_message(channel_id, usage)
             return
 
         project_name = positional[0]
@@ -201,7 +209,9 @@ class Orchestrator:
         )
 
         try:
-            session = await self._cmd.cmd_new_session(project_name, verbose=verbose)
+            session = await self._cmd.cmd_new_session(
+                project_name, verbose=verbose, agent=agent,
+            )
             verbose_label = " (verbose)" if verbose else ""
             topic_link = self._messenger.get_channel_link(session.channel_id)
             await self._messenger.send_message(
@@ -381,7 +391,7 @@ class Orchestrator:
             f"❓ Unknown command: {command_text}\n\n"
             "Available commands:\n"
             "/project add|list|remove — manage projects\n"
-            "/new <project> [-v|--verbose] — create session\n"
+            "/new <project> [-v] [--agent <name>] — create session\n"
             "/sessions — list active sessions\n"
             "/stop — stop current session\n"
             "/complete — merge & cleanup session\n"
