@@ -18,6 +18,7 @@ def _make_commands(
     tmp_path: Path,
     stt=None,
     template_store=None,
+    base_path: str | None = None,
 ) -> Commands:
     """Create a Commands instance with mocked SessionManager."""
     project_store = ProjectStore(data_dir)
@@ -29,6 +30,7 @@ def _make_commands(
         message_store=message_store,
         stt=stt,
         template_store=template_store,
+        base_path=base_path,
     )
 
 
@@ -143,3 +145,59 @@ class TestHasVoiceSupport:
     def test_without_stt(self, data_dir: Path, tmp_path: Path):
         cmd = _make_commands(data_dir, tmp_path, stt=None)
         assert cmd.has_voice_support is False
+
+
+class TestNewSessionRejectsUnregistered:
+    @pytest.mark.asyncio
+    async def test_unregistered_project_raises(self, data_dir: Path, tmp_path: Path):
+        cmd = _make_commands(data_dir, tmp_path)
+        with pytest.raises(ValueError, match="Unregistered project"):
+            await cmd.cmd_new_session("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_error_hints_project_commands(self, data_dir: Path, tmp_path: Path):
+        cmd = _make_commands(data_dir, tmp_path)
+        with pytest.raises(ValueError, match="/project add or /project init"):
+            await cmd.cmd_new_session("nonexistent")
+
+
+class TestInitProject:
+    @pytest.mark.asyncio
+    async def test_no_base_path(self, data_dir: Path, tmp_path: Path):
+        cmd = _make_commands(data_dir, tmp_path, base_path=None)
+        ok, msg = await cmd.cmd_init_project("myproject")
+        assert ok is False
+        assert "AFK_BASE_PATH" in msg
+
+    @pytest.mark.asyncio
+    async def test_already_registered(self, data_dir: Path, tmp_path: Path):
+        project_dir = tmp_path / "existing"
+        project_dir.mkdir()
+        cmd = _make_commands(data_dir, tmp_path, base_path=str(tmp_path / "base"))
+        cmd.cmd_add_project("existing", str(project_dir))
+        ok, msg = await cmd.cmd_init_project("existing")
+        assert ok is False
+        assert "already registered" in msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_init_existing_dir(self, data_dir: Path, tmp_path: Path):
+        base = tmp_path / "base"
+        base.mkdir()
+        project_dir = base / "myproject"
+        project_dir.mkdir()
+        cmd = _make_commands(data_dir, tmp_path, base_path=str(base))
+        ok, msg = await cmd.cmd_init_project("myproject")
+        assert ok is True
+        assert "registered" in msg.lower()
+        assert cmd.cmd_get_project("myproject") is not None
+
+    @pytest.mark.asyncio
+    async def test_init_creates_new_dir(self, data_dir: Path, tmp_path: Path):
+        base = tmp_path / "base"
+        base.mkdir()
+        cmd = _make_commands(data_dir, tmp_path, base_path=str(base))
+        ok, msg = await cmd.cmd_init_project("newproject")
+        assert ok is True
+        assert "created" in msg.lower()
+        assert (base / "newproject").is_dir()
+        assert cmd.cmd_get_project("newproject") is not None

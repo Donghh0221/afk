@@ -52,8 +52,8 @@ graph LR
 
 ## Telegram Commands
 
-- `/project add|list|remove` — register project names to local paths
-- `/new <project_name> [-v|--verbose] [--agent <name>] [--template <name>]` — create new session (worktree + branch + forum topic); `-v`/`--verbose` shows full tool input/output; `--agent`/`-a` overrides agent runtime for this session (e.g. `--agent deep-research` for OpenAI Deep Research); `--template`/`-t` applies a workspace template (scaffold files + agent context); with `AFK_BASE_PATH` set, unregistered projects are auto-resolved from `base_path/{name}`
+- `/project add|list|remove|init` — manage projects; `init <name>` creates/registers a project under `AFK_BASE_PATH`
+- `/new <project_name> [-v|--verbose] [--agent <name>] [--template <name>]` — create new session (worktree + branch + forum topic); only accepts registered projects (use `/project add` or `/project init` first); `-v`/`--verbose` shows full tool input/output; `--agent`/`-a` overrides agent runtime for this session (e.g. `--agent deep-research` for OpenAI Deep Research); `--template`/`-t` applies a workspace template (scaffold files + agent context)
 - `/sessions` — list active sessions with state indicators
 - `/stop` — stop current session's agent process and clean up worktree
 - `/complete` — auto-commit worktree changes, merge into main, cleanup
@@ -67,7 +67,7 @@ graph LR
 - `AFK_TELEGRAM_BOT_TOKEN` (required) — Telegram bot token
 - `AFK_TELEGRAM_GROUP_ID` (required) — Telegram group/supergroup ID
 - `AFK_AGENT` (optional, default: `claude`) — agent runtime selection (`claude`, `codex`, or `deep-research`)
-- `AFK_BASE_PATH` (optional) — base directory for auto-resolving projects; `/new myproject` will look for or create `$AFK_BASE_PATH/myproject`
+- `AFK_BASE_PATH` (optional) — base directory for `/project init`; `/project init myproject` will look for or create `$AFK_BASE_PATH/myproject`
 - `AFK_DASHBOARD_PORT` (optional, default: 7777) — web control plane port
 - `AFK_OPENAI_API_KEY` or `OPENAI_API_KEY` (optional) — enables voice message transcription via Whisper API and Deep Research agent
 - `AFK_DEEP_RESEARCH_MODEL` (optional, default: `o4-mini-deep-research`) — OpenAI Deep Research model

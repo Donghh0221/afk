@@ -113,6 +113,36 @@ class Commands:
         """Look up a project by name."""
         return self._ps.get(name)
 
+    async def cmd_init_project(self, name: str) -> tuple[bool, str]:
+        """Initialize and register a project under ``base_path``.
+
+        - Requires ``AFK_BASE_PATH`` to be set.
+        - If ``base_path/{name}`` exists: auto-register (git init if needed).
+        - If ``base_path/{name}`` doesn't exist: mkdir + git init + register.
+
+        Returns (success, message).
+        """
+        if not self._base_path:
+            return False, (
+                "AFK_BASE_PATH is not set.\n"
+                "Set it to a base directory for auto-initializing projects."
+            )
+
+        if self._ps.get(name):
+            return False, f"Project already registered: {name}"
+
+        project_dir = Path(self._base_path) / name
+        if project_dir.is_dir():
+            if not await is_git_repo(str(project_dir)):
+                await git_init(str(project_dir))
+            self._ps.add(name, str(project_dir))
+            return True, f"Project registered: {name} → {project_dir}"
+        else:
+            project_dir.mkdir(parents=True, exist_ok=True)
+            await git_init(str(project_dir))
+            self._ps.add(name, str(project_dir))
+            return True, f"Project created and registered: {name} → {project_dir}"
+
     # -- Session commands --------------------------------------------------
 
     async def cmd_new_session(
@@ -123,11 +153,8 @@ class Commands:
     ) -> Session:
         """Create a new session. Raises RuntimeError on failure.
 
-        Smart project resolution:
-        1. Already registered in ProjectStore → use it.
-        2. ``base_path/{name}`` exists → auto-register (git init if needed).
-        3. ``base_path`` set but dir missing → mkdir + git init + register.
-        4. No ``base_path`` and not registered → error.
+        Only registered projects are accepted. Use ``/project add`` or
+        ``/project init`` to register a project first.
 
         *channel_id* — if provided, skip messenger channel creation
         (used by the web control plane).
@@ -151,30 +178,10 @@ class Commands:
                 agent = template_config.agent
 
         project = self._ps.get(project_name)
-
-        if not project and self._base_path:
-            project_dir = Path(self._base_path) / project_name
-            if project_dir.is_dir():
-                # Existing directory — auto-register (git init if needed)
-                if not await is_git_repo(str(project_dir)):
-                    await git_init(str(project_dir))
-                self._ps.add(project_name, str(project_dir))
-                project = self._ps.get(project_name)
-            else:
-                # Create new project directory
-                project_dir.mkdir(parents=True, exist_ok=True)
-                await git_init(str(project_dir))
-                self._ps.add(project_name, str(project_dir))
-                project = self._ps.get(project_name)
-
         if not project:
-            hint = (
-                " Set AFK_BASE_PATH to auto-create projects."
-                if not self._base_path else ""
-            )
             raise ValueError(
                 f"Unregistered project: {project_name}\n"
-                f"Check /project list for available projects.{hint}"
+                f"Use /project add or /project init to register first."
             )
 
         session = await self._sm.create_session(
