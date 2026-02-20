@@ -137,14 +137,15 @@ class Orchestrator:
     async def _handle_project_command(
         self, channel_id: str, args: list[str]
     ) -> None:
-        """/project add|list|remove handler."""
+        """/project add|list|remove|init handler."""
         if not args:
             await self._messenger.send_message(
                 channel_id,
                 "Usage:\n"
                 "/project add <path> <name>\n"
                 "/project list\n"
-                "/project remove <name>",
+                "/project remove <name>\n"
+                "/project init <name>",
             )
             return
 
@@ -172,6 +173,12 @@ class Orchestrator:
             emoji = "✅" if ok else "⚠️"
             await self._messenger.send_message(channel_id, f"{emoji} {msg}")
 
+        elif sub == "init" and len(args) >= 2:
+            name = args[1]
+            ok, msg = await self._cmd.cmd_init_project(name)
+            emoji = "✅" if ok else "⚠️"
+            await self._messenger.send_message(channel_id, f"{emoji} {msg}")
+
         else:
             await self._messenger.send_message(
                 channel_id, "❌ Invalid command. Use /project to see usage."
@@ -185,6 +192,10 @@ class Orchestrator:
         if not args:
             await self._messenger.send_message(channel_id, usage)
             return
+
+        # Normalize Unicode dashes to ASCII hyphens
+        # (Telegram/mobile keyboards often auto-convert -- to em-dash)
+        args = [a.replace("\u2014", "--").replace("\u2013", "-") for a in args]
 
         verbose = "--verbose" in args or "-v" in args
 
@@ -418,7 +429,7 @@ class Orchestrator:
             channel_id,
             f"❓ Unknown command: {command_text}\n\n"
             "Available commands:\n"
-            "/project add|list|remove — manage projects\n"
+            "/project add|list|remove|init — manage projects\n"
             "/new <project> [-v] [--agent <name>] [--template <name>] — create session\n"
             "/sessions — list active sessions\n"
             "/stop — stop current session\n"
