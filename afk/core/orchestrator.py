@@ -137,7 +137,7 @@ class Orchestrator:
     async def _handle_project_command(
         self, channel_id: str, args: list[str]
     ) -> None:
-        """/project add|list|remove|init handler."""
+        """/project add|list|remove|init|info handler."""
         if not args:
             await self._messenger.send_message(
                 channel_id,
@@ -145,7 +145,8 @@ class Orchestrator:
                 "/project add <path> <name>\n"
                 "/project list\n"
                 "/project remove <name>\n"
-                "/project init <name>",
+                "/project init <name>\n"
+                "/project info <name>",
             )
             return
 
@@ -178,6 +179,36 @@ class Orchestrator:
             ok, msg = await self._cmd.cmd_init_project(name)
             emoji = "✅" if ok else "⚠️"
             await self._messenger.send_message(channel_id, f"{emoji} {msg}")
+
+        elif sub == "info" and len(args) >= 2:
+            name = args[1]
+            info = self._cmd.cmd_project_info(name)
+            if not info:
+                await self._messenger.send_message(
+                    channel_id, f"⚠️ Unregistered project: {name}"
+                )
+            else:
+                lines = [
+                    f"📁 Project: {info['name']}",
+                    f"Path: {info['path']}",
+                ]
+                if info["created_at"]:
+                    lines.append(f"Registered: {info['created_at']}")
+                if info["sessions"]:
+                    lines.append(f"\nActive sessions ({len(info['sessions'])}):")
+                    for s in info["sessions"]:
+                        state_emoji = {
+                            "idle": "💤", "running": "🏃",
+                            "waiting_permission": "⏳",
+                            "stopped": "🔴",
+                        }.get(s["state"], "❓")
+                        lines.append(
+                            f"  {state_emoji} {s['name']} "
+                            f"[{s['state']}] (agent: {s['agent_name']})"
+                        )
+                else:
+                    lines.append("\nNo active sessions.")
+                await self._messenger.send_message(channel_id, "\n".join(lines))
 
         else:
             await self._messenger.send_message(
@@ -431,7 +462,7 @@ class Orchestrator:
             channel_id,
             f"❓ Unknown command: {command_text}\n\n"
             "Available commands:\n"
-            "/project add|list|remove|init — manage projects\n"
+            "/project add|list|remove|init|info — manage projects\n"
             "/new <project> [-v] [--agent <name>] [--template <name>] — create session\n"
             "/sessions — list active sessions\n"
             "/stop — stop current session\n"

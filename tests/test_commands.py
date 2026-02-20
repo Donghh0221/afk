@@ -87,6 +87,46 @@ class TestProjectCommands:
         assert cmd.cmd_get_project("got") is not None
         assert cmd.cmd_get_project("nope") is None
 
+    def test_project_info_not_found(self, data_dir: Path, tmp_path: Path):
+        cmd = _make_commands(data_dir, tmp_path)
+        assert cmd.cmd_project_info("nope") is None
+
+    def test_project_info_no_sessions(self, data_dir: Path, tmp_path: Path):
+        project_dir = tmp_path / "info_proj"
+        project_dir.mkdir()
+        cmd = _make_commands(data_dir, tmp_path)
+        cmd.cmd_add_project("info_proj", str(project_dir))
+        cmd._sm.list_sessions.return_value = []
+        info = cmd.cmd_project_info("info_proj")
+        assert info is not None
+        assert info["name"] == "info_proj"
+        assert info["path"] == str(project_dir)
+        assert info["sessions"] == []
+
+    def test_project_info_with_sessions(self, data_dir: Path, tmp_path: Path):
+        project_dir = tmp_path / "active_proj"
+        project_dir.mkdir()
+        cmd = _make_commands(data_dir, tmp_path)
+        cmd.cmd_add_project("active_proj", str(project_dir))
+        agent_mock = MagicMock()
+        agent_mock.is_alive = True
+        cmd._sm.list_sessions.return_value = [
+            Session(
+                name="active_proj-260220-120000",
+                project_name="active_proj",
+                project_path=str(project_dir),
+                worktree_path="/w",
+                channel_id="ch1",
+                agent=agent_mock,
+                agent_name="deep-research",
+                state="running",
+            ),
+        ]
+        info = cmd.cmd_project_info("active_proj")
+        assert len(info["sessions"]) == 1
+        assert info["sessions"][0]["agent_name"] == "deep-research"
+        assert info["sessions"][0]["state"] == "running"
+
 
 class TestListSessions:
     def test_converts_sessions_to_session_info(self, data_dir: Path, tmp_path: Path):

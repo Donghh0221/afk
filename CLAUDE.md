@@ -52,7 +52,7 @@ graph LR
 
 ## Telegram Commands
 
-- `/project add|list|remove|init` — manage projects; `init <name>` creates/registers a project under `AFK_BASE_PATH`
+- `/project add|list|remove|init|info` — manage projects; `init <name>` creates/registers under `AFK_BASE_PATH`; `info <name>` shows path, registration date, and active sessions
 - `/new <project_name> [-v|--verbose] [--agent <name>] [--template <name>]` — create new session (worktree + branch + forum topic); only accepts registered projects (use `/project add` or `/project init` first); `-v`/`--verbose` shows full tool input/output; `--agent`/`-a` overrides agent runtime for this session (e.g. `--agent deep-research` for OpenAI Deep Research); `--template`/`-t` applies a workspace template (scaffold files + agent context)
 - `/sessions` — list active sessions with state indicators
 - `/stop` — stop current session's agent process and clean up worktree

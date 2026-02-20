@@ -113,6 +113,29 @@ class Commands:
         """Look up a project by name."""
         return self._ps.get(name)
 
+    def cmd_project_info(self, name: str) -> dict | None:
+        """Return detailed project info including active sessions."""
+        project = self._ps.get(name)
+        if not project:
+            return None
+        sessions = [
+            {
+                "name": s.name,
+                "state": s.state,
+                "agent_name": s.agent_name,
+                "agent_alive": s.agent.is_alive,
+                "channel_id": s.channel_id,
+            }
+            for s in self._sm.list_sessions()
+            if s.project_name.lower() == name.lower()
+        ]
+        return {
+            "name": name,
+            "path": project["path"],
+            "created_at": project.get("created_at", ""),
+            "sessions": sessions,
+        }
+
     async def cmd_init_project(self, name: str) -> tuple[bool, str]:
         """Initialize and register a project under ``base_path``.
 
