@@ -68,7 +68,7 @@ async def main() -> None:
     event_bus = EventBus()
     messenger = TelegramAdapter(telegram_config)
     project_store = ProjectStore(data_dir)
-    message_store = MessageStore()
+    message_store = MessageStore(data_dir)
 
     # Select agent runtime via AFK_AGENT env var (default: claude)
     agent_type = os.environ.get("AFK_AGENT", "claude").lower()
