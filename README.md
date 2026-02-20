@@ -14,40 +14,17 @@ AFK breaks that loop:
 - **See what's happening.** A built-in web control plane shows live session activity, message history, and daemon logs — all at `localhost:7777`.
 - **Verify remotely.** Start a dev server tunnel with `/tunnel` and preview your app from your phone.
 
-The target user is a solo entrepreneur, freelancer, or one-person agency who uses AI to produce real deliverables — code, documents, research reports. AFK makes that workflow mobile.
+> Get off your ass.
 
 ## How It Works
 
-```mermaid
-graph LR
-    subgraph Client["Phone / Laptop"]
-        Input["Telegram voice or text"]
-    end
-
-    subgraph Server["Server (always on)"]
-        Daemon["AFK daemon"]
-        CP["Control Plane (Telegram bot)"]
-        API["Commands API (single entry point)"]
-        SM["Session Manager"]
-        SesA["Session A → Agent (Claude Code)"]
-        SesB["Session B → Agent (Claude Code)"]
-        EB["EventBus (typed events)"]
-        Cap["Capabilities (tunnel, ...)"]
-        Web["Web Control Plane (localhost:7777)"]
-
-        Daemon --- CP & API & SM & EB & Cap & Web
-        SM --- SesA & SesB
-    end
-
-    Input -->|request| Daemon
-    Daemon -->|"streaming responses,\npermission buttons,\ncompletion notifications"| Client
-```
-
 1. You send a message (text or voice) in a Telegram forum topic
-2. AFK routes it through the Commands API to the agent subprocess tied to that topic
-3. The agent streams responses back — published as events, rendered to Telegram silently
+2. AFK routes it to the agent subprocess tied to that topic
+3. The agent streams responses back, rendered to Telegram silently
 4. When the agent needs permission to run a tool, you get a notification with Allow/Deny buttons
 5. On completion, you see cost and duration
+
+Each session runs in an isolated git worktree with its own branch. For architecture details, see [ARCH.md](ARCH.md).
 
 ## Prerequisites
 
@@ -255,20 +232,11 @@ Start a session with the Deep Research agent to get web-researched reports deliv
 /new myresearch --agent deep-research # Start Deep Research session
 ```
 
-Then send your research query in the session topic. The pipeline:
-
-1. **OpenAI API** — submits a background research request, polls every 10s until completion
-2. **Report saved** — writes `report.md` to the worktree (or `output/report.md` if using the research template)
-3. **Git commit** — auto-commits the report
-4. **File delivery** — emits a `file_output` event → EventBus routes it as `FileReadyEvent` → Telegram sends the file as a document with push notification
-
-The report includes extracted citations as a Sources section at the bottom.
+Then send your research query in the session topic. The agent submits a background research request, writes `report.md` to the worktree, auto-commits, and delivers the file via Telegram.
 
 ```
 /new myresearch --template research --agent deep-research  # With scaffold
 ```
-
-The `research` template creates an `output/` directory and sets agent context for research tasks.
 
 ### Workspace Templates
 
@@ -395,59 +363,6 @@ systemctl --user daemon-reload
 systemctl --user enable --now afk
 journalctl --user -u afk -f    # Logs
 ```
-
-## Session Lifecycle
-
-Each session follows this lifecycle:
-
-```
-/new MyApp
-  → creates branch: afk/myapp-260218-143022
-  → creates worktree: .afk-worktrees/myapp-260218-143022
-  → creates Telegram forum topic
-  → starts agent subprocess
-
-[user sends prompts, agent works]
-
-/complete
-  → auto-commits uncommitted changes
-  → rebases onto main + fast-forward merge
-  → removes worktree and branch
-  → deletes forum topic
-
-/stop (alternative)
-  → stops agent, removes worktree, no merge
-```
-
-Sessions survive daemon restarts — on startup, AFK recovers active sessions from `sessions.json` and resumes agent processes with their previous context.
-
-## Architecture
-
-3-layer hexagonal architecture with pluggable ports and adapters:
-
-```
-┌─────────────────────────────────────────────────┐
-│  Adapters                                       │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐│
-│  │ Telegram  │ │   Web    │ │ Claude/Codex/DR  ││
-│  │ Adapter   │ │  Server  │ │ Agent Adapters   ││
-│  └────┬─────┘ └────┬─────┘ └───────┬──────────┘│
-├───────┼────────────┼────────────────┼───────────┤
-│  Ports│(Protocols) │                │           │
-│  ┌────┴─────┐ ┌────┴─────┐ ┌───────┴──────┐   │
-│  │ Control  │ │ Control  │ │   Agent      │   │
-│  │PlanePort │ │PlanePort │ │   Port       │   │
-│  └────┬─────┘ └────┬─────┘ └───────┬──────┘   │
-├───────┼────────────┼────────────────┼───────────┤
-│  Core │            │                │           │
-│  ┌────┴────────────┴────────────────┴────────┐ │
-│  │  Commands → SessionManager → EventBus     │ │
-│  │            → GitWorktree                  │ │
-│  └───────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────┘
-```
-
-See [ARCH.md](ARCH.md) for the full architecture deep dive and [PROJECT.md](PROJECT.md) for vision and roadmap.
 
 ## Development
 
