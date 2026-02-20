@@ -12,7 +12,7 @@ AFK ("Away From Keyboard") is a Python daemon that serves as a remote control pl
 - **python-telegram-bot[ext]>=21.0** — Telegram Bot API (asyncio native)
 - **aiohttp>=3.9** — web control plane server
 - **python-dotenv>=1.0** — environment variable loading
-- **openai>=1.0** — Whisper API for voice transcription (optional, only if API key is set)
+- **openai>=1.0** — Whisper API for voice transcription + Deep Research API (optional, only if API key is set)
 - **Claude Code CLI** — headless mode via `--input-format stream-json --output-format stream-json`
 - **OpenAI Codex CLI** — non-interactive mode via `codex exec --json` (optional, selected via `AFK_AGENT=codex`)
 - **cloudflared** — quick tunnels for remote verification (optional)
@@ -53,7 +53,7 @@ graph LR
 ## Telegram Commands
 
 - `/project add|list|remove` — register project names to local paths
-- `/new <project_name> [-v|--verbose] [--agent <name>] [--template <name>]` — create new session (worktree + branch + forum topic); `-v`/`--verbose` shows full tool input/output; `--agent`/`-a` overrides agent runtime for this session; `--template`/`-t` applies a workspace template (scaffold files + agent context); with `AFK_BASE_PATH` set, unregistered projects are auto-resolved from `base_path/{name}`
+- `/new <project_name> [-v|--verbose] [--agent <name>] [--template <name>]` — create new session (worktree + branch + forum topic); `-v`/`--verbose` shows full tool input/output; `--agent`/`-a` overrides agent runtime for this session (e.g. `--agent deep-research` for OpenAI Deep Research); `--template`/`-t` applies a workspace template (scaffold files + agent context); with `AFK_BASE_PATH` set, unregistered projects are auto-resolved from `base_path/{name}`
 - `/sessions` — list active sessions with state indicators
 - `/stop` — stop current session's agent process and clean up worktree
 - `/complete` — auto-commit worktree changes, merge into main, cleanup
@@ -66,10 +66,12 @@ graph LR
 
 - `AFK_TELEGRAM_BOT_TOKEN` (required) — Telegram bot token
 - `AFK_TELEGRAM_GROUP_ID` (required) — Telegram group/supergroup ID
-- `AFK_AGENT` (optional, default: `claude`) — agent runtime selection (`claude` or `codex`)
+- `AFK_AGENT` (optional, default: `claude`) — agent runtime selection (`claude`, `codex`, or `deep-research`)
 - `AFK_BASE_PATH` (optional) — base directory for auto-resolving projects; `/new myproject` will look for or create `$AFK_BASE_PATH/myproject`
 - `AFK_DASHBOARD_PORT` (optional, default: 7777) — web control plane port
-- `AFK_OPENAI_API_KEY` or `OPENAI_API_KEY` (optional) — enables voice message transcription via Whisper API
+- `AFK_OPENAI_API_KEY` or `OPENAI_API_KEY` (optional) — enables voice message transcription via Whisper API and Deep Research agent
+- `AFK_DEEP_RESEARCH_MODEL` (optional, default: `o4-mini-deep-research`) — OpenAI Deep Research model
+- `AFK_DEEP_RESEARCH_MAX_TOOL_CALLS` (optional) — max tool calls for cost control
 
 ## Development Notes
 

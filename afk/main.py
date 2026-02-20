@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 from pathlib import Path
+from typing import Callable
 
 from dotenv import load_dotenv
 
@@ -71,13 +72,24 @@ async def main() -> None:
 
     # Select agent runtime via AFK_AGENT env var (default: claude)
     agent_type = os.environ.get("AFK_AGENT", "claude").lower()
-    agent_registry: dict[str, type[AgentPort]] = {"claude": ClaudeCodeAgent}
+    agent_registry: dict[str, Callable[[], AgentPort]] = {"claude": ClaudeCodeAgent}
     if agent_type == "codex":
         from afk.adapters.codex.agent import CodexAgent
         agent_registry["codex"] = CodexAgent
         logger.info("Agent runtime: OpenAI Codex CLI (default)")
     else:
         logger.info("Agent runtime: Claude Code CLI (default)")
+
+    # Deep Research agent (requires OpenAI API key)
+    if openai_api_key:
+        from afk.adapters.deep_research.agent import DeepResearchAgent
+        dr_model = os.environ.get("AFK_DEEP_RESEARCH_MODEL", "o4-mini-deep-research")
+        dr_max_str = os.environ.get("AFK_DEEP_RESEARCH_MAX_TOOL_CALLS", "")
+        dr_max = int(dr_max_str) if dr_max_str else None
+        agent_registry["deep-research"] = lambda: DeepResearchAgent(
+            api_key=openai_api_key, model=dr_model, max_tool_calls=dr_max,
+        )
+        logger.info("Deep Research agent available (model: %s)", dr_model)
 
     # AFK_BASE_PATH — enables smart /new auto-resolution
     base_path = os.environ.get("AFK_BASE_PATH", "")
