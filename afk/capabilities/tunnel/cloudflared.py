@@ -6,6 +6,8 @@ import logging
 import re
 import shutil
 
+import aiohttp
+
 from afk.capabilities.tunnel.base import DevServerConfig
 
 logger = logging.getLogger(__name__)
@@ -84,7 +86,7 @@ class CloudflaredTunnelProcess:
     # ------------------------------------------------------------------
 
     async def _wait_for_dev_server(self, timeout: float = 30.0) -> None:
-        """Wait until the dev server is ready (output keywords + TCP port check)."""
+        """Wait until the dev server is ready (output keywords + HTTP check)."""
         if not self._dev_server:
             return
 
@@ -120,9 +122,23 @@ class CloudflaredTunnelProcess:
             except (OSError, asyncio.TimeoutError):
                 return False
 
+        async def _check_http(p: int) -> bool:
+            """Return True if the dev server responds to an HTTP GET."""
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"http://127.0.0.1:{p}/",
+                        timeout=aiohttp.ClientTimeout(total=2),
+                    ) as resp:
+                        # Any HTTP response means the server is serving
+                        return True
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+                return False
+
         try:
             loop = asyncio.get_event_loop()
             deadline = loop.time() + timeout
+            port_open = False
 
             while loop.time() < deadline:
                 # Read from both stdout and stderr concurrently
@@ -136,19 +152,20 @@ class CloudflaredTunnelProcess:
                 for t in pending:
                     t.cancel()
 
-                # If any stream found a ready keyword, verify with port check
-                if any(t.result() for t in done if not t.cancelled()):
-                    if port and await _check_port(port):
-                        logger.info("Dev server ready (keyword + port %d open)", port)
-                        return
-                    # Keyword found but port not open yet — keep waiting
-                    logger.debug("Ready keyword found but port %d not open yet", port)
-                    continue
+                keyword_found = any(
+                    t.result() for t in done if not t.cancelled()
+                )
 
-                # No keyword yet — try a direct TCP port check as fallback
-                if port and await _check_port(port):
-                    logger.info("Dev server ready (port %d open)", port)
-                    return
+                if not port_open and port:
+                    port_open = await _check_port(port)
+
+                # Once port is open, verify HTTP readiness
+                if port_open:
+                    if await _check_http(port):
+                        logger.info("Dev server ready (HTTP responds on port %d)", port)
+                        return
+                    if keyword_found:
+                        logger.debug("Port %d open + keyword found but HTTP not ready yet", port)
 
                 # Check if dev server process died
                 if self._dev_server.returncode is not None:
