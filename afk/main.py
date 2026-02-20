@@ -23,6 +23,7 @@ from afk.adapters.telegram.adapter import TelegramAdapter
 from afk.core.session_manager import SessionManager
 from afk.core.orchestrator import Orchestrator
 from afk.storage.project_store import ProjectStore
+from afk.storage.template_store import TemplateStore
 
 LOG_FILE = "/tmp/afk.log"
 
@@ -112,12 +113,17 @@ async def main() -> None:
     # Clean up orphan worktrees (skips recovered session worktrees)
     await session_manager.cleanup_orphan_worktrees(project_store)
 
+    # Workspace templates
+    templates_dir = Path(__file__).parent / "templates"
+    template_store = TemplateStore(templates_dir)
+
     # Command API — single entry point for all control planes
     commands = Commands(
         session_manager, project_store, message_store,
         stt=stt,
         tunnel=tunnel_capability,
         base_path=base_path or None,
+        template_store=template_store,
     )
 
     # Event renderer — subscribes to EventBus, renders to messenger

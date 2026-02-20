@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from afk.ports.agent import AgentPort
     from afk.ports.control_plane import ControlPlanePort
     from afk.storage.project_store import ProjectStore
+    from afk.storage.template_store import TemplateConfig
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class Session:
     state: str = "idle"  # idle | running | waiting_permission | stopped
     verbose: bool = False
     managed_channel: bool = True  # False for web channels (no Telegram topic)
+    template_name: str | None = None
     created_at: float = field(default_factory=time.time)
     _response_task: asyncio.Task | None = field(default=None, repr=False)
     _session_logger: SessionLogger | None = field(default=None, repr=False)
@@ -113,6 +115,7 @@ class SessionManager:
         self, project_name: str, project_path: str,
         channel_id: str | None = None,
         agent_name: str | None = None,
+        template: TemplateConfig | None = None,
     ) -> Session:
         """Create new session: git worktree + forum topic + agent process.
 
@@ -148,6 +151,11 @@ class SessionManager:
         # Create git worktree (raises RuntimeError on failure)
         await create_worktree(project_path, worktree_path, branch_name)
 
+        # Apply template scaffold files (before agent starts)
+        if template:
+            from afk.storage.template_store import TemplateStore
+            TemplateStore.apply(template, worktree_path)
+
         # Per-session logging (stored in data_dir, survives worktree cleanup)
         session_logger = SessionLogger(
             self._data_dir / "logs" / session_name, session_name,
@@ -175,6 +183,7 @@ class SessionManager:
             channel_id=channel_id,
             agent=agent,
             managed_channel=managed_channel,
+            template_name=template.name if template else None,
             _session_logger=session_logger,
         )
 
@@ -495,6 +504,7 @@ class SessionManager:
             agent_session_id = info.get("agent_session_id")
             verbose = info.get("verbose", False)
             managed_channel = info.get("managed_channel", True)
+            template_name = info.get("template_name")
             created_at = info.get("created_at", time.time())
 
             if not Path(worktree_path).is_dir():
@@ -542,6 +552,7 @@ class SessionManager:
                     agent_session_id=agent_session_id,
                     verbose=verbose,
                     managed_channel=managed_channel,
+                    template_name=template_name,
                     created_at=created_at,
                     _session_logger=session_logger,
                 )
@@ -617,6 +628,7 @@ class SessionManager:
                 "state": s.state,
                 "verbose": s.verbose,
                 "managed_channel": s.managed_channel,
+                "template_name": s.template_name,
                 "created_at": s.created_at,
             }
         path = self._data_dir / "sessions.json"

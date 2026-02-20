@@ -1,0 +1,10 @@
+{
+  "name": "nextjs",
+  "description": "Next.js project with tunnel support",
+  "agent": "claude",
+  "capabilities": ["tunnel"],
+  "completion_criteria": {
+    "required_files": ["package.json", "app/page.tsx"],
+    "description": "App builds successfully"
+  }
+}

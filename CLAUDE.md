@@ -53,12 +53,13 @@ graph LR
 ## Telegram Commands
 
 - `/project add|list|remove` — register project names to local paths
-- `/new <project_name> [-v|--verbose] [--agent <name>]` — create new session (worktree + branch + forum topic); `-v`/`--verbose` shows full tool input/output; `--agent`/`-a` overrides agent runtime for this session; with `AFK_BASE_PATH` set, unregistered projects are auto-resolved from `base_path/{name}`
+- `/new <project_name> [-v|--verbose] [--agent <name>] [--template <name>]` — create new session (worktree + branch + forum topic); `-v`/`--verbose` shows full tool input/output; `--agent`/`-a` overrides agent runtime for this session; `--template`/`-t` applies a workspace template (scaffold files + agent context); with `AFK_BASE_PATH` set, unregistered projects are auto-resolved from `base_path/{name}`
 - `/sessions` — list active sessions with state indicators
 - `/stop` — stop current session's agent process and clean up worktree
 - `/complete` — auto-commit worktree changes, merge into main, cleanup
 - `/status` — check current session state (name, agent alive, project, worktree, tunnel URL)
 - `/tunnel` — start dev server + cloudflared tunnel; `/tunnel stop` to stop
+- `/template list` — list available workspace templates
 - Unknown commands display help with the list of available commands
 
 ## Environment Variables

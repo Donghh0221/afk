@@ -19,6 +19,7 @@ from afk.storage.project_store import ProjectStore
 if TYPE_CHECKING:
     from afk.capabilities.tunnel.tunnel import TunnelCapability
     from afk.ports.stt import STTPort
+    from afk.storage.template_store import TemplateStore
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ class Commands:
         stt: STTPort | None = None,
         tunnel: TunnelCapability | None = None,
         base_path: str | None = None,
+        template_store: TemplateStore | None = None,
     ) -> None:
         self._sm = session_manager
         self._ps = project_store
@@ -74,6 +76,7 @@ class Commands:
         self._stt = stt
         self._tunnel = tunnel
         self._base_path = base_path
+        self._ts = template_store
 
     @property
     def message_store(self) -> MessageStore:
@@ -116,6 +119,7 @@ class Commands:
         self, project_name: str, verbose: bool = False,
         channel_id: str | None = None,
         agent: str | None = None,
+        template: str | None = None,
     ) -> Session:
         """Create a new session. Raises RuntimeError on failure.
 
@@ -128,7 +132,24 @@ class Commands:
         *channel_id* — if provided, skip messenger channel creation
         (used by the web control plane).
         *agent* — override agent runtime for this session.
+        *template* — workspace template name to apply scaffold files.
         """
+        # Resolve template
+        template_config = None
+        if template:
+            if not self._ts:
+                raise ValueError("Template store not available.")
+            template_config = self._ts.get(template)
+            if not template_config:
+                available = ", ".join(self._ts.list_all().keys())
+                raise ValueError(
+                    f"Unknown template: {template}\n"
+                    f"Available templates: {available or 'none'}"
+                )
+            # Template agent is a fallback — CLI --agent takes priority
+            if not agent and template_config.agent:
+                agent = template_config.agent
+
         project = self._ps.get(project_name)
 
         if not project and self._base_path:
@@ -159,6 +180,7 @@ class Commands:
         session = await self._sm.create_session(
             project_name, project["path"],
             channel_id=channel_id, agent_name=agent,
+            template=template_config,
         )
         session.verbose = verbose
         return session
@@ -248,6 +270,21 @@ class Commands:
         return await self._sm.send_permission_response(
             channel_id, request_id, allowed
         )
+
+    # -- Template commands -------------------------------------------------
+
+    def cmd_list_templates(self) -> list[dict]:
+        """List all available workspace templates."""
+        if not self._ts:
+            return []
+        return [
+            {
+                "name": t.name,
+                "description": t.description,
+                "agent": t.agent,
+            }
+            for t in self._ts.list_all().values()
+        ]
 
     # -- Tunnel commands ---------------------------------------------------
 

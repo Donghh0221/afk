@@ -40,6 +40,7 @@ class Orchestrator:
         messenger.set_on_command("complete", self._handle_complete_command)
         messenger.set_on_command("status", self._handle_status_command)
         messenger.set_on_command("tunnel", self._handle_tunnel_command)
+        messenger.set_on_command("template", self._handle_template_command)
         messenger.set_on_unknown_command(self._handle_unknown_command)
         messenger.set_on_permission_response(self._handle_permission_response)
 
@@ -179,21 +180,24 @@ class Orchestrator:
     async def _handle_new_command(
         self, channel_id: str, args: list[str]
     ) -> None:
-        """/new <project_name> [-v|--verbose] [--agent <name>] — create a new session."""
-        usage = "Usage: /new <project_name> [-v|--verbose] [--agent <name>]"
+        """/new <project_name> [-v|--verbose] [--agent <name>] [--template <name>]"""
+        usage = "Usage: /new <project_name> [-v|--verbose] [--agent <name>] [--template <name>]"
         if not args:
             await self._messenger.send_message(channel_id, usage)
             return
 
         verbose = "--verbose" in args or "-v" in args
 
-        # Extract --agent / -a value
+        # Extract --agent / -a and --template / -t values
         agent: str | None = None
+        template: str | None = None
         filtered_args: list[str] = []
         it = iter(args)
         for a in it:
             if a in ("--agent", "-a"):
                 agent = next(it, None)
+            elif a in ("--template", "-t"):
+                template = next(it, None)
             else:
                 filtered_args.append(a)
 
@@ -211,6 +215,7 @@ class Orchestrator:
         try:
             session = await self._cmd.cmd_new_session(
                 project_name, verbose=verbose, agent=agent,
+                template=template,
             )
             verbose_label = " (verbose)" if verbose else ""
             topic_link = self._messenger.get_channel_link(session.channel_id)
@@ -382,6 +387,29 @@ class Orchestrator:
                 channel_id, msg_id, f"❌ Tunnel failed: {e}"
             )
 
+    async def _handle_template_command(
+        self, channel_id: str, args: list[str]
+    ) -> None:
+        """/template list — list available workspace templates."""
+        if not args or args[0].lower() != "list":
+            await self._messenger.send_message(
+                channel_id, "Usage: /template list"
+            )
+            return
+
+        templates = self._cmd.cmd_list_templates()
+        if not templates:
+            await self._messenger.send_message(
+                channel_id, "No templates available."
+            )
+            return
+
+        lines = []
+        for t in templates:
+            agent_info = f" (agent: {t['agent']})" if t.get("agent") else ""
+            lines.append(f"📋 {t['name']}{agent_info} — {t['description']}")
+        await self._messenger.send_message(channel_id, "\n".join(lines))
+
     async def _handle_unknown_command(
         self, channel_id: str, command_text: str
     ) -> None:
@@ -391,12 +419,13 @@ class Orchestrator:
             f"❓ Unknown command: {command_text}\n\n"
             "Available commands:\n"
             "/project add|list|remove — manage projects\n"
-            "/new <project> [-v] [--agent <name>] — create session\n"
+            "/new <project> [-v] [--agent <name>] [--template <name>] — create session\n"
             "/sessions — list active sessions\n"
             "/stop — stop current session\n"
             "/complete — merge & cleanup session\n"
             "/status — check session state\n"
-            "/tunnel — start dev server tunnel (stop: /tunnel stop)",
+            "/tunnel — start dev server tunnel (stop: /tunnel stop)\n"
+            "/template list — list workspace templates",
         )
 
     async def _handle_permission_response(

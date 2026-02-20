@@ -1,0 +1,5 @@
+{
+  "name": "research",
+  "description": "Research and analysis with structured output",
+  "agent": "claude"
+}
