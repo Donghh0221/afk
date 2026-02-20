@@ -151,7 +151,7 @@ AFK_TELEGRAM_GROUP_ID="-100xxxxxxxxxx"
 # Optional — enables voice messages (Whisper) and Deep Research agent
 # AFK_OPENAI_API_KEY="sk-..."
 
-# Optional — auto-resolve project paths with /new
+# Optional — base directory for /project init
 # AFK_BASE_PATH="~/workspace"
 
 # Optional — web dashboard port (default: 7777)
@@ -179,37 +179,35 @@ AFK is now listening for Telegram messages and serving the web dashboard.
 ### Step 5. Verify
 
 1. Open Telegram → go to your supergroup
-2. Send `/project add ~/projects/myapp MyApp` (register a project)
-3. Send `/new MyApp` — a new forum topic is created with an active agent session
+2. Register a project: `/project add ~/projects/myapp myapp` (or `/project init myapp` if `AFK_BASE_PATH` is set)
+3. Send `/new myapp` — a new forum topic is created with an active agent session
 4. Switch to the new topic and type a prompt — the agent should respond
 
 ## Usage
 
 All interaction happens in your Telegram supergroup.
 
-### Start a Session
+### Register a Project
 
-The simplest way — set `AFK_BASE_PATH` and skip manual project registration:
+Before starting a session, register the project:
 
 ```
-/new myapp                        # Start from $AFK_BASE_PATH/myapp
+/project add ~/projects/myapp myapp   # Register existing directory
+/project init myapp                   # Create + register under $AFK_BASE_PATH
+/project list                         # List registered projects
+/project remove myapp                 # Unregister
+```
+
+`/project init` requires `AFK_BASE_PATH` — it creates `$AFK_BASE_PATH/myapp` (with `git init`) if it doesn't exist, or registers the existing directory.
+
+### Start a Session
+
+```
+/new myapp                        # Start session (project must be registered)
 /new myapp -v                     # Verbose — show full tool input/output
 /new myapp --agent codex          # Use Codex for this session only
 /new myapp --agent deep-research  # Use OpenAI Deep Research
 /new myapp --template nextjs      # Apply workspace template
-```
-
-What happens with `/new`:
-1. If `myapp` is already a registered project → use it
-2. If `$AFK_BASE_PATH/myapp` exists → auto-register and start (runs `git init` if needed)
-3. If the directory doesn't exist → create it + `git init` + start
-
-To manage projects manually:
-
-```
-/project add ~/projects/myapp myapp
-/project list
-/project remove myapp
 ```
 
 Each `/new` creates a forum topic (e.g. `myapp-260218-143022`) with an isolated git worktree and starts an agent subprocess.
@@ -247,6 +245,30 @@ Requires [cloudflared](https://developers.cloudflare.com/cloudflare-one/connecti
 /stop              # Stop current session and remove worktree (session topic)
 /complete          # Commit, merge branch into main, clean up (session topic)
 ```
+
+### Deep Research
+
+Start a session with the Deep Research agent to get web-researched reports delivered as files:
+
+```
+/project init myresearch              # Register project
+/new myresearch --agent deep-research # Start Deep Research session
+```
+
+Then send your research query in the session topic. The pipeline:
+
+1. **OpenAI API** — submits a background research request, polls every 10s until completion
+2. **Report saved** — writes `report.md` to the worktree (or `output/report.md` if using the research template)
+3. **Git commit** — auto-commits the report
+4. **File delivery** — emits a `file_output` event → EventBus routes it as `FileReadyEvent` → Telegram sends the file as a document with push notification
+
+The report includes extracted citations as a Sources section at the bottom.
+
+```
+/new myresearch --template research --agent deep-research  # With scaffold
+```
+
+The `research` template creates an `output/` directory and sets agent context for research tasks.
 
 ### Workspace Templates
 
@@ -296,7 +318,7 @@ GET  /api/logs                                  # Daemon log tail
 | `AFK_TELEGRAM_GROUP_ID` | Yes | — | Supergroup chat ID (negative number) |
 | `AFK_OPENAI_API_KEY` | No | — | Enables voice transcription (Whisper) and Deep Research agent. Also reads `OPENAI_API_KEY` |
 | `AFK_AGENT` | No | `claude` | Default agent runtime: `claude`, `codex`, or `deep-research` |
-| `AFK_BASE_PATH` | No | — | Base directory for smart `/new` auto-resolution |
+| `AFK_BASE_PATH` | No | — | Base directory for `/project init` |
 | `AFK_DASHBOARD_PORT` | No | `7777` | Web control plane port |
 | `AFK_DEEP_RESEARCH_MODEL` | No | `o4-mini-deep-research` | OpenAI Deep Research model |
 | `AFK_DEEP_RESEARCH_MAX_TOOL_CALLS` | No | — | Max tool calls for Deep Research cost control |
