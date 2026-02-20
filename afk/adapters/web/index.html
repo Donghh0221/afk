@@ -155,6 +155,7 @@ header h1 { font-size: 14px; font-weight: 600; }
 .btn-danger { border-color: var(--red); color: var(--red); }
 .btn-primary { border-color: var(--accent); color: var(--accent); }
 .btn-green { border-color: var(--green); color: var(--green); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Messages */
 .messages {
@@ -463,10 +464,15 @@ async function showProjectInfo(name) {
       </div>`;
   }
 
+  const hasActiveSessions = info.sessions && info.sessions.length > 0;
   const registered = info.created_at ? new Date(info.created_at).toLocaleString() : "—";
   main.innerHTML = `
     <div class="project-info">
-      <h3>${escapeHtml(info.name)}</h3>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h3 style="margin:0">${escapeHtml(info.name)}</h3>
+        <button class="btn btn-danger" onclick="removeProject('${escapeHtml(info.name)}')"
+          ${hasActiveSessions ? 'disabled title="Stop active sessions first"' : ''}>Remove</button>
+      </div>
       <div class="info-row">
         <span class="info-label">Path</span>
         <span class="info-value">${escapeHtml(info.path)}</span>
@@ -491,6 +497,18 @@ async function addProject() {
   document.getElementById("proj-name").value = "";
   document.getElementById("proj-path").value = "";
   toggleAddProject();
+  fetchProjects();
+}
+
+async function removeProject(name) {
+  if (!confirm(`Remove project "${name}"? This only unregisters it — files on disk are not deleted.`)) return;
+  const result = await api("DELETE", `/api/projects/${encodeURIComponent(name)}`);
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+  document.getElementById("main-area").innerHTML =
+    '<div class="empty-state">Select or create a session</div>';
   fetchProjects();
 }
 
