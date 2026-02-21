@@ -51,6 +51,18 @@ class SessionStatus:
     redirect_url: str | None = None
 
 
+@dataclass
+class TunnelInitResult:
+    config_path: str
+    services: list[dict]  # [{name, command, path, tunnel}]
+
+
+@dataclass
+class TunnelStartResult:
+    urls: dict[str, str]   # {service_name: public_url}
+    multi_service: bool
+
+
 # ---------------------------------------------------------------------------
 # Command API
 # ---------------------------------------------------------------------------
@@ -326,8 +338,27 @@ class Commands:
 
     # -- Tunnel commands ---------------------------------------------------
 
-    async def cmd_start_tunnel(self, channel_id: str) -> str:
-        """Start dev-server tunnel. Returns public URL. Raises RuntimeError."""
+    async def cmd_init_tunnel(self, channel_id: str) -> TunnelInitResult:
+        """Generate .afk/tunnel.json via Claude CLI. Raises RuntimeError."""
+        if not self._tunnel:
+            raise RuntimeError("Tunnel capability not available.")
+
+        session = self._sm.get_session(channel_id)
+        if not session:
+            raise RuntimeError("No session found for this topic.")
+
+        config = await self._tunnel.init_tunnel(session.worktree_path)
+        config_path = str(Path(session.worktree_path) / ".afk" / "tunnel.json")
+        return TunnelInitResult(
+            config_path=config_path,
+            services=[
+                {"name": s.name, "command": s.command, "path": s.path, "tunnel": s.tunnel}
+                for s in config.services
+            ],
+        )
+
+    async def cmd_start_tunnel(self, channel_id: str) -> TunnelStartResult:
+        """Start dev-server tunnel(s). Returns TunnelStartResult. Raises RuntimeError."""
         if not self._tunnel:
             raise RuntimeError("Tunnel capability not available.")
 
@@ -338,9 +369,21 @@ class Commands:
         # Check if already running
         existing = self._tunnel.get_tunnel(channel_id)
         if existing:
-            return existing.public_url
+            from afk.capabilities.tunnel.multi_service import MultiServiceTunnelProcess
+            if isinstance(existing, MultiServiceTunnelProcess):
+                return TunnelStartResult(
+                    urls=existing.public_urls,
+                    multi_service=True,
+                )
+            return TunnelStartResult(
+                urls={"default": existing.public_url or ""},
+                multi_service=False,
+            )
 
-        return await self._tunnel.start_tunnel(channel_id, session.worktree_path)
+        result = await self._tunnel.start_tunnel(channel_id, session.worktree_path)
+        if isinstance(result, dict):
+            return TunnelStartResult(urls=result, multi_service=True)
+        return TunnelStartResult(urls={"default": result}, multi_service=False)
 
     async def cmd_stop_tunnel(self, channel_id: str) -> bool:
         """Stop tunnel. Returns True if stopped."""
@@ -367,8 +410,24 @@ class Commands:
             "public_url": t.public_url,
             "framework": t.config.framework if t.config else None,
         }
-        # Expose HTTPS redirect URL for Expo tunnels (used for iOS deep link)
-        redirect_url = getattr(t, "redirect_url", None)
-        if redirect_url:
-            info["redirect_url"] = redirect_url
+        # Multi-service: include per-service details
+        from afk.capabilities.tunnel.multi_service import MultiServiceTunnelProcess
+        if isinstance(t, MultiServiceTunnelProcess):
+            info["multi_service"] = True
+            info["services"] = [
+                {
+                    "name": svc.config.name,
+                    "port": svc.port,
+                    "alive": svc.is_alive,
+                    "tunnel": svc.config.tunnel,
+                    "public_url": svc.public_url,
+                }
+                for svc in t.services
+            ]
+        else:
+            info["multi_service"] = False
+            # Expose HTTPS redirect URL for Expo tunnels (used for iOS deep link)
+            redirect_url = getattr(t, "redirect_url", None)
+            if redirect_url:
+                info["redirect_url"] = redirect_url
         return info

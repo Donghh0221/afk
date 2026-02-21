@@ -389,7 +389,7 @@ class Orchestrator:
     async def _handle_tunnel_command(
         self, channel_id: str, args: list[str]
     ) -> None:
-        """/tunnel [stop] — start or stop a dev server tunnel."""
+        """/tunnel [init|stop] — init config, start, or stop tunnels."""
         # /tunnel stop
         if args and args[0].lower() == "stop":
             stopped = await self._cmd.cmd_stop_tunnel(channel_id)
@@ -403,15 +403,44 @@ class Orchestrator:
                 )
             return
 
-        # Already running — resend URL with type-appropriate presentation
+        # /tunnel init — generate .afk/tunnel.json via Claude CLI
+        if args and args[0].lower() == "init":
+            msg_id = await self._messenger.send_message(
+                channel_id,
+                "⏳ Analyzing project with Claude CLI...",
+                silent=True,
+            )
+            try:
+                result = await self._cmd.cmd_init_tunnel(channel_id)
+                lines = [f"✅ Config generated: {result.config_path}\n"]
+                lines.append("Services:")
+                for svc in result.services:
+                    tunnel_flag = "tunnel" if svc["tunnel"] else "no tunnel"
+                    lines.append(
+                        f"  {svc['name']} ({tunnel_flag}): {svc['command']}"
+                    )
+                lines.append("\nRun /tunnel to start all services.")
+                await self._messenger.edit_message(
+                    channel_id, msg_id, "\n".join(lines),
+                )
+            except RuntimeError as e:
+                await self._messenger.edit_message(
+                    channel_id, msg_id, f"❌ Tunnel init failed: {e}"
+                )
+            return
+
+        # Already running — resend info with type-appropriate presentation
         tunnel_info = self._cmd.cmd_get_tunnel_info(channel_id)
         if tunnel_info:
-            url = tunnel_info["public_url"]
-            if tunnel_info["tunnel_type"] == "expo":
+            if tunnel_info.get("multi_service"):
+                await self._send_multi_service_info(channel_id, tunnel_info)
+            elif tunnel_info["tunnel_type"] == "expo":
+                url = tunnel_info["public_url"]
                 await self._send_expo_qr(
                     channel_id, url, tunnel_info.get("redirect_url"),
                 )
             else:
+                url = tunnel_info["public_url"]
                 await self._messenger.send_message(
                     channel_id, f"Tunnel already running: {url}",
                     link_url=url, link_label="Open in browser",
@@ -425,10 +454,17 @@ class Orchestrator:
         )
 
         try:
-            url = await self._cmd.cmd_start_tunnel(channel_id)
-            # Check what type of tunnel was started
+            result = await self._cmd.cmd_start_tunnel(channel_id)
             info = self._cmd.cmd_get_tunnel_info(channel_id)
-            if info and info["tunnel_type"] == "expo":
+
+            if result.multi_service:
+                await self._messenger.edit_message(
+                    channel_id, msg_id, "✅ Multi-service tunnel active",
+                )
+                if info:
+                    await self._send_multi_service_info(channel_id, info)
+            elif info and info["tunnel_type"] == "expo":
+                url = result.urls.get("default", "")
                 await self._messenger.edit_message(
                     channel_id, msg_id, "✅ Expo tunnel active",
                 )
@@ -436,6 +472,7 @@ class Orchestrator:
                     channel_id, url, info.get("redirect_url"),
                 )
             else:
+                url = result.urls.get("default", "")
                 await self._messenger.edit_message(
                     channel_id, msg_id, "✅ Tunnel active",
                 )
@@ -447,6 +484,24 @@ class Orchestrator:
             await self._messenger.edit_message(
                 channel_id, msg_id, f"❌ Tunnel failed: {e}"
             )
+
+    async def _send_multi_service_info(
+        self, channel_id: str, info: dict,
+    ) -> None:
+        """Format and send per-service status/URL info."""
+        lines = ["Services:"]
+        for svc in info.get("services", []):
+            status = "alive" if svc["alive"] else "stopped"
+            if svc.get("public_url"):
+                url_part = svc["public_url"]
+            elif svc["tunnel"]:
+                url_part = "tunnel pending"
+            else:
+                url_part = "no tunnel"
+            lines.append(
+                f"  {svc['name']} (port {svc['port']}, {status}): {url_part}"
+            )
+        await self._messenger.send_message(channel_id, "\n".join(lines))
 
     async def _send_expo_qr(
         self, channel_id: str, url: str, redirect_url: str | None = None,
@@ -523,7 +578,9 @@ class Orchestrator:
             "/stop — stop current session\n"
             "/complete — merge & cleanup session\n"
             "/status — check session state\n"
-            "/tunnel — start dev server tunnel (stop: /tunnel stop)\n"
+            "/tunnel — start dev server tunnel\n"
+            "/tunnel init — generate tunnel config via Claude CLI\n"
+            "/tunnel stop — stop active tunnel\n"
             "/template list — list workspace templates",
         )
 

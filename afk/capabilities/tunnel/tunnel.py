@@ -3,12 +3,19 @@ from __future__ import annotations
 
 import json
 import logging
-import socket
 from pathlib import Path
 
 from afk.capabilities.tunnel.base import DevServerConfig, TunnelProcessProtocol
 from afk.capabilities.tunnel.cloudflared import CloudflaredTunnelProcess
+from afk.capabilities.tunnel.config import (
+    TunnelConfig,
+    find_free_port,
+    generate_tunnel_config,
+    load_tunnel_config,
+    save_tunnel_config,
+)
 from afk.capabilities.tunnel.expo import ExpoTunnelProcess
+from afk.capabilities.tunnel.multi_service import MultiServiceTunnelProcess
 
 logger = logging.getLogger(__name__)
 
@@ -16,12 +23,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Project type detection
 # ---------------------------------------------------------------------------
-
-def _find_free_port() -> int:
-    """Ask the OS for an available TCP port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
 
 
 def _detect_package_manager(worktree: Path) -> list[str]:
@@ -93,7 +94,7 @@ def detect_dev_server(worktree_path: str) -> DevServerConfig | None:
 
     # Check for Expo project first (may not have a "dev" script)
     if _is_expo_project(wt, pkg):
-        port = _find_free_port()
+        port = find_free_port()
         pm = _detect_package_manager(wt)
         # Use npx expo start --tunnel --port PORT
         cmd = ["npx", "expo", "start", "--tunnel", "--port", str(port)]
@@ -107,7 +108,7 @@ def detect_dev_server(worktree_path: str) -> DevServerConfig | None:
     dev_script = scripts["dev"]
     pm = _detect_package_manager(wt)
     framework = _detect_framework(pkg, dev_script)
-    port = _find_free_port()
+    port = find_free_port()
     port_args = _build_port_args(framework, port)
 
     # e.g. ["npm", "run", "dev", "--", "--port", "9123"]
@@ -126,24 +127,49 @@ class TunnelCapability:
     """Manages tunnels as a side-car to sessions.
 
     Tracks one tunnel process per session (keyed by channel_id).
-    Dispatches to ExpoTunnelProcess or CloudflaredTunnelProcess based on
-    the detected framework.
+    Dispatches to MultiServiceTunnelProcess (config-based),
+    ExpoTunnelProcess, or CloudflaredTunnelProcess.
     """
 
     def __init__(self) -> None:
-        self._tunnels: dict[str, TunnelProcessProtocol] = {}
+        self._tunnels: dict[str, TunnelProcessProtocol | MultiServiceTunnelProcess] = {}
 
-    async def start_tunnel(self, channel_id: str, worktree_path: str) -> str:
-        """Detect dev server and start tunnel. Returns public URL.
+    async def init_tunnel(self, worktree_path: str) -> TunnelConfig:
+        """Use Claude CLI to analyze the project and generate .afk/tunnel.json.
+
+        Returns the generated TunnelConfig. Raises RuntimeError on failure.
+        """
+        config = await generate_tunnel_config(worktree_path)
+        save_tunnel_config(worktree_path, config)
+        return config
+
+    async def start_tunnel(
+        self, channel_id: str, worktree_path: str,
+    ) -> str | dict[str, str]:
+        """Start tunnel(s). Returns public URL (str) or {name: url} dict.
+
+        Priority:
+        1. ``.afk/tunnel.json`` exists → multi-service
+        2. Auto-detect → Expo or Cloudflared (single service)
 
         Raises RuntimeError on detection/startup failure.
         """
+        # 1. Try config-based multi-service
+        tunnel_config = load_tunnel_config(worktree_path)
+        if tunnel_config:
+            multi = MultiServiceTunnelProcess()
+            urls = await multi.start(worktree_path, tunnel_config)
+            self._tunnels[channel_id] = multi
+            return urls
+
+        # 2. Fallback: auto-detect single service
         config = detect_dev_server(worktree_path)
         if not config:
             raise RuntimeError(
                 "Could not detect dev server.\n"
                 'Ensure the worktree has a package.json with a "dev" script '
-                "or is an Expo project with app.json."
+                "or is an Expo project with app.json.\n\n"
+                "Tip: Use /tunnel init to generate a config for any project type."
             )
 
         tunnel: TunnelProcessProtocol
@@ -164,7 +190,9 @@ class TunnelCapability:
         await tunnel.stop()
         return True
 
-    def get_tunnel(self, channel_id: str) -> TunnelProcessProtocol | None:
+    def get_tunnel(
+        self, channel_id: str,
+    ) -> TunnelProcessProtocol | MultiServiceTunnelProcess | None:
         """Get active tunnel for a session, or None."""
         tunnel = self._tunnels.get(channel_id)
         if tunnel and not tunnel.is_alive:
