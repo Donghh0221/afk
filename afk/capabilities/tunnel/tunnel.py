@@ -154,17 +154,23 @@ class TunnelCapability:
 
         Raises RuntimeError on detection/startup failure.
         """
-        # 1. Try config-based multi-service
+        # 1. Config-based multi-service (2+ services)
         tunnel_config = load_tunnel_config(worktree_path)
-        if tunnel_config:
+        if tunnel_config and len(tunnel_config.services) >= 2:
             multi = MultiServiceTunnelProcess()
             urls = await multi.start(worktree_path, tunnel_config)
             self._tunnels[channel_id] = multi
             return urls
 
-        # 2. Fallback: auto-detect single service
+        # 2. Auto-detect single service (Expo or web)
         config = detect_dev_server(worktree_path)
         if not config:
+            # Fallback: single-service tunnel.json when auto-detect fails
+            if tunnel_config and len(tunnel_config.services) == 1:
+                multi = MultiServiceTunnelProcess()
+                urls = await multi.start(worktree_path, tunnel_config)
+                self._tunnels[channel_id] = multi
+                return urls
             raise RuntimeError(
                 "Could not detect dev server.\n"
                 'Ensure the worktree has a package.json with a "dev" script '

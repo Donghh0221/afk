@@ -10,6 +10,7 @@ import pytest
 from afk.capabilities.tunnel.base import DevServerConfig, TunnelProcessProtocol
 from afk.capabilities.tunnel.cloudflared import CloudflaredTunnelProcess
 from afk.capabilities.tunnel.expo import ExpoTunnelProcess
+from afk.capabilities.tunnel.multi_service import MultiServiceTunnelProcess
 from afk.capabilities.tunnel.tunnel import TunnelCapability
 
 
@@ -145,3 +146,87 @@ class TestTunnelCapabilityDispatch:
             await cap.cleanup_session("ch5")
 
         assert cap.get_tunnel("ch5") is None
+
+
+class TestSingleServiceTunnelJsonOptimization:
+    """Single-service tunnel.json should use auto-detect (Expo/Cloudflared)."""
+
+    @pytest.mark.asyncio
+    async def test_single_service_expo_uses_expo_process(self, tmp_path: Path):
+        """1-service tunnel.json + Expo project → ExpoTunnelProcess."""
+        pkg = {
+            "name": "test-expo",
+            "dependencies": {"expo": "~52.0.0"},
+        }
+        (tmp_path / "package.json").write_text(json.dumps(pkg))
+        (tmp_path / "app.json").write_text('{"expo": {}}')
+
+        # Create single-service tunnel.json
+        afk_dir = tmp_path / ".afk"
+        afk_dir.mkdir()
+        (afk_dir / "tunnel.json").write_text(json.dumps({
+            "services": [
+                {"name": "expo", "command": "npx expo start --port {port}", "path": ".", "tunnel": True}
+            ]
+        }))
+
+        cap = TunnelCapability()
+
+        with (
+            patch.object(ExpoTunnelProcess, "start", new_callable=AsyncMock) as mock_start,
+            patch.object(ExpoTunnelProcess, "is_alive", new_callable=lambda: property(lambda self: True)),
+        ):
+            mock_start.return_value = "https://test.trycloudflare.com"
+            url = await cap.start_tunnel("ch10", str(tmp_path))
+
+        assert url == "https://test.trycloudflare.com"
+        assert isinstance(cap._tunnels["ch10"], ExpoTunnelProcess)
+
+    @pytest.mark.asyncio
+    async def test_multi_service_uses_multi_process(self, tmp_path: Path):
+        """2-service tunnel.json → MultiServiceTunnelProcess."""
+        pkg = {
+            "name": "test-app",
+            "dependencies": {"expo": "~52.0.0"},
+        }
+        (tmp_path / "package.json").write_text(json.dumps(pkg))
+        (tmp_path / "app.json").write_text('{"expo": {}}')
+
+        afk_dir = tmp_path / ".afk"
+        afk_dir.mkdir()
+        (afk_dir / "tunnel.json").write_text(json.dumps({
+            "services": [
+                {"name": "web", "command": "npm run dev --port {port}", "path": ".", "tunnel": True},
+                {"name": "api", "command": "uvicorn main:app --port {port}", "path": "./api", "tunnel": True},
+            ]
+        }))
+
+        cap = TunnelCapability()
+
+        with patch.object(MultiServiceTunnelProcess, "start", new_callable=AsyncMock) as mock_start:
+            mock_start.return_value = {"web": "https://a.trycloudflare.com", "api": "https://b.trycloudflare.com"}
+            result = await cap.start_tunnel("ch11", str(tmp_path))
+
+        assert isinstance(result, dict)
+        assert isinstance(cap._tunnels["ch11"], MultiServiceTunnelProcess)
+
+    @pytest.mark.asyncio
+    async def test_single_service_fallback_when_no_autodetect(self, tmp_path: Path):
+        """1-service tunnel.json + no auto-detect → fallback to MultiServiceTunnelProcess."""
+        # No package.json → auto-detect fails
+        afk_dir = tmp_path / ".afk"
+        afk_dir.mkdir()
+        (afk_dir / "tunnel.json").write_text(json.dumps({
+            "services": [
+                {"name": "app", "command": "python -m http.server {port}", "path": ".", "tunnel": True}
+            ]
+        }))
+
+        cap = TunnelCapability()
+
+        with patch.object(MultiServiceTunnelProcess, "start", new_callable=AsyncMock) as mock_start:
+            mock_start.return_value = {"app": "https://c.trycloudflare.com"}
+            result = await cap.start_tunnel("ch12", str(tmp_path))
+
+        assert isinstance(result, dict)
+        assert isinstance(cap._tunnels["ch12"], MultiServiceTunnelProcess)
