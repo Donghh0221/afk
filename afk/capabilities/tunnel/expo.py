@@ -17,6 +17,7 @@ import aiohttp
 
 from afk.capabilities.tunnel.base import DevServerConfig
 from afk.capabilities.tunnel.redirect import RedirectTunnel
+from afk.core.subprocess_tracker import track, untrack
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ class ExpoTunnelProcess:
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
+        track(self._dev_server.pid)
 
         # 2. Wait for Metro to be ready
         await self._wait_for_dev_server()
@@ -99,6 +101,7 @@ class ExpoTunnelProcess:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        track(self._cloudflared.pid)
 
         # 4. Parse HTTPS URL from cloudflared
         self._public_url = await self._wait_for_tunnel_url()
@@ -226,6 +229,7 @@ class ExpoTunnelProcess:
             ("expo", self._dev_server),
         ]:
             if proc and proc.returncode is None:
+                pid = proc.pid
                 try:
                     proc.terminate()
                     await asyncio.wait_for(proc.wait(), timeout=5)
@@ -234,6 +238,7 @@ class ExpoTunnelProcess:
                         proc.kill()
                     except ProcessLookupError:
                         pass
+                untrack(pid)
                 logger.info("Stopped %s process", name)
 
         self._cloudflared = None

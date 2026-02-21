@@ -15,6 +15,8 @@ import socket
 
 from aiohttp import web
 
+from afk.core.subprocess_tracker import track, untrack
+
 logger = logging.getLogger(__name__)
 
 _REDIRECT_HTML_TEMPLATE = """\
@@ -93,6 +95,7 @@ class RedirectTunnel:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            track(self._cloudflared.pid)
 
             # 3. Parse public URL from cloudflared stderr
             self._public_url = await self._wait_for_tunnel_url()
@@ -135,6 +138,7 @@ class RedirectTunnel:
     async def stop(self) -> None:
         """Shut down cloudflared + aiohttp server."""
         if self._cloudflared and self._cloudflared.returncode is None:
+            pid = self._cloudflared.pid
             try:
                 self._cloudflared.terminate()
                 await asyncio.wait_for(self._cloudflared.wait(), timeout=5)
@@ -143,6 +147,7 @@ class RedirectTunnel:
                     self._cloudflared.kill()
                 except ProcessLookupError:
                     pass
+            untrack(pid)
             logger.info("Stopped redirect cloudflared process")
 
         if self._runner:

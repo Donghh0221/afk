@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import aiohttp
 
 from afk.capabilities.tunnel.base import DevServerConfig
+from afk.core.subprocess_tracker import track, untrack
 from afk.capabilities.tunnel.config import ServiceConfig, TunnelConfig, find_free_port
 
 logger = logging.getLogger(__name__)
@@ -109,6 +110,7 @@ class MultiServiceTunnelProcess:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
+                track(running.process.pid)
 
                 # 2. Wait for TCP port to open
                 await self._wait_for_service(svc_config.name, port)
@@ -122,6 +124,7 @@ class MultiServiceTunnelProcess:
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
+                    track(running.cloudflared.pid)
                     url = await self._wait_for_tunnel_url(
                         svc_config.name, running.cloudflared,
                     )
@@ -238,6 +241,7 @@ class MultiServiceTunnelProcess:
             (f"service({svc.config.name})", svc.process),
         ]:
             if proc and proc.returncode is None:
+                pid = proc.pid
                 try:
                     proc.terminate()
                     await asyncio.wait_for(proc.wait(), timeout=5)
@@ -246,6 +250,7 @@ class MultiServiceTunnelProcess:
                         proc.kill()
                     except ProcessLookupError:
                         pass
+                untrack(pid)
                 logger.info("Stopped %s", label)
 
         svc.cloudflared = None

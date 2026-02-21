@@ -68,6 +68,9 @@ class ClaudeCodeAgent(AgentPort):
         )
         self._alive = True
 
+        from afk.core.subprocess_tracker import track
+        track(self._process.pid)
+
         if stderr_log_path and self._process.stderr:
             self._stderr_task = asyncio.create_task(
                 self._drain_stderr(self._process.stderr, stderr_log_path)
@@ -171,6 +174,7 @@ class ClaudeCodeAgent(AgentPort):
 
         if self._process:
             self._alive = False
+            pid = self._process.pid
             try:
                 self._process.terminate()
                 await asyncio.wait_for(self._process.wait(), timeout=5)
@@ -180,4 +184,6 @@ class ClaudeCodeAgent(AgentPort):
                 except ProcessLookupError:
                     pass
             self._process = None
+            from afk.core.subprocess_tracker import untrack
+            untrack(pid)
             logger.info("Claude process stopped")

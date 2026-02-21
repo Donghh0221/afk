@@ -9,6 +9,7 @@ from typing import Callable
 
 from dotenv import load_dotenv
 
+from afk.core.subprocess_tracker import set_pid_file, cleanup_stale_pids
 from afk.adapters.claude_code.agent import ClaudeCodeAgent
 from afk.adapters.claude_code.commit_helper import generate_commit_message
 from afk.ports.agent import AgentPort
@@ -58,6 +59,12 @@ async def main() -> None:
     )
 
     data_dir = Path(__file__).parent / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Subprocess tracking — kill stale children from previous crash
+    set_pid_file(data_dir / "child_pids")
+    cleanup_stale_pids()
+
     web_port = int(os.environ.get("AFK_DASHBOARD_PORT", "7777"))
     openai_api_key = (
         os.environ.get("AFK_OPENAI_API_KEY", "")
