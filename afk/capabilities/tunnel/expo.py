@@ -8,6 +8,7 @@ import os
 import re
 
 from afk.capabilities.tunnel.base import DevServerConfig
+from afk.capabilities.tunnel.redirect import RedirectTunnel
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,11 @@ class ExpoTunnelProcess:
 
     Unlike cloudflared, Expo handles both the dev server and tunnel in one
     process (via the ``@expo/ngrok`` package).
+
+    After the Expo tunnel is up, an optional :class:`RedirectTunnel` is
+    started to provide an HTTPS URL that redirects to ``exp://``.  This
+    allows Telegram inline buttons (which require https) to open Expo Go
+    on iOS with a single tap.
     """
 
     def __init__(self) -> None:
@@ -24,10 +30,18 @@ class ExpoTunnelProcess:
         self._public_url: str | None = None
         self._config: DevServerConfig | None = None
         self._hostname: str | None = None
+        self._redirect: RedirectTunnel | None = None
 
     @property
     def public_url(self) -> str | None:
         return self._public_url
+
+    @property
+    def redirect_url(self) -> str | None:
+        """HTTPS redirect URL (cloudflared → exp://), or None."""
+        if self._redirect and self._redirect.is_alive:
+            return self._redirect.public_url
+        return None
 
     @property
     def is_alive(self) -> bool:
@@ -61,26 +75,34 @@ class ExpoTunnelProcess:
 
         # Parse tunnel URL from output
         self._public_url = await self._wait_for_tunnel_url()
+
+        # Start HTTPS redirect tunnel (best-effort; graceful fallback)
+        self._redirect = RedirectTunnel()
+        await self._redirect.start(self._public_url)
+
         return self._public_url
 
     async def _ensure_ngrok(self, worktree_path: str) -> None:
-        """Install @expo/ngrok if not already present."""
-        try:
-            check = await asyncio.create_subprocess_exec(
-                "npx", "--yes", "@expo/ngrok", "--version",
-                cwd=worktree_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(check.wait(), timeout=30)
-            if check.returncode == 0:
-                return
-        except (asyncio.TimeoutError, OSError):
-            pass
+        """Install @expo/ngrok if not already present in node_modules."""
+        from pathlib import Path
+
+        ngrok_dir = Path(worktree_path) / "node_modules" / "@expo" / "ngrok"
+        if ngrok_dir.is_dir():
+            return
 
         logger.info("Installing @expo/ngrok for tunnel support...")
+
+        # Use the project's package manager
+        wt = Path(worktree_path)
+        if (wt / "pnpm-lock.yaml").exists():
+            cmd = ["pnpm", "add", "@expo/ngrok"]
+        elif (wt / "yarn.lock").exists():
+            cmd = ["yarn", "add", "@expo/ngrok"]
+        else:
+            cmd = ["npm", "install", "@expo/ngrok"]
+
         install = await asyncio.create_subprocess_exec(
-            "npx", "--yes", "expo", "install", "@expo/ngrok",
+            *cmd,
             cwd=worktree_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -91,6 +113,9 @@ class ExpoTunnelProcess:
             logger.warning("Timed out installing @expo/ngrok")
         if install.returncode != 0:
             logger.warning("@expo/ngrok install exited with code %d", install.returncode or -1)
+
+        if not ngrok_dir.is_dir():
+            logger.warning("@expo/ngrok not found in node_modules after install")
 
     async def _wait_for_tunnel_url(self, timeout: float = 60.0) -> str:
         """Parse Expo output for the tunnel URL.
@@ -211,7 +236,11 @@ class ExpoTunnelProcess:
         return None
 
     async def stop(self) -> None:
-        """Stop the Expo process."""
+        """Stop the Expo process and redirect tunnel."""
+        if self._redirect:
+            await self._redirect.stop()
+            self._redirect = None
+
         if self._process and self._process.returncode is None:
             try:
                 self._process.terminate()

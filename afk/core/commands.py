@@ -48,6 +48,7 @@ class SessionStatus:
     worktree_path: str
     tunnel_url: str | None
     tunnel_type: str | None = None
+    redirect_url: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -280,11 +281,13 @@ class Commands:
 
         tunnel_url = None
         tunnel_type = None
+        redirect_url = None
         if self._tunnel:
             t = self._tunnel.get_tunnel(channel_id)
             if t:
                 tunnel_url = t.public_url
                 tunnel_type = t.tunnel_type
+                redirect_url = getattr(t, "redirect_url", None)
 
         return SessionStatus(
             name=session.name,
@@ -295,6 +298,7 @@ class Commands:
             worktree_path=session.worktree_path,
             tunnel_url=tunnel_url,
             tunnel_type=tunnel_type,
+            redirect_url=redirect_url,
         )
 
     async def cmd_permission_response(
@@ -352,14 +356,19 @@ class Commands:
         return t.public_url if t else None
 
     def cmd_get_tunnel_info(self, channel_id: str) -> dict | None:
-        """Get tunnel info (type, URL, framework) if active."""
+        """Get tunnel info (type, URL, framework, redirect_url) if active."""
         if not self._tunnel:
             return None
         t = self._tunnel.get_tunnel(channel_id)
         if not t:
             return None
-        return {
+        info: dict = {
             "tunnel_type": t.tunnel_type,
             "public_url": t.public_url,
             "framework": t.config.framework if t.config else None,
         }
+        # Expose HTTPS redirect URL for Expo tunnels (used for iOS deep link)
+        redirect_url = getattr(t, "redirect_url", None)
+        if redirect_url:
+            info["redirect_url"] = redirect_url
+        return info

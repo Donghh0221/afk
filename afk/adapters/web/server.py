@@ -164,6 +164,9 @@ async def _handle_status(request: web.Request) -> web.Response:
     # Expose exp:// URL separately for Expo tunnels (web UI can generate QR)
     if status.tunnel_type == "expo" and status.tunnel_url:
         data["expo_url"] = status.tunnel_url
+    # Expose HTTPS redirect URL for Expo tunnels (iOS deep link)
+    if status.redirect_url:
+        data["redirect_url"] = status.redirect_url
     return web.json_response(data)
 
 

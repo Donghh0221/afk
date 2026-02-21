@@ -408,7 +408,9 @@ class Orchestrator:
         if tunnel_info:
             url = tunnel_info["public_url"]
             if tunnel_info["tunnel_type"] == "expo":
-                await self._send_expo_qr(channel_id, url)
+                await self._send_expo_qr(
+                    channel_id, url, tunnel_info.get("redirect_url"),
+                )
             else:
                 await self._messenger.send_message(
                     channel_id, f"Tunnel already running: {url}",
@@ -430,7 +432,9 @@ class Orchestrator:
                 await self._messenger.edit_message(
                     channel_id, msg_id, "✅ Expo tunnel active",
                 )
-                await self._send_expo_qr(channel_id, url)
+                await self._send_expo_qr(
+                    channel_id, url, info.get("redirect_url"),
+                )
             else:
                 await self._messenger.edit_message(
                     channel_id, msg_id, "✅ Tunnel active",
@@ -444,8 +448,20 @@ class Orchestrator:
                 channel_id, msg_id, f"❌ Tunnel failed: {e}"
             )
 
-    async def _send_expo_qr(self, channel_id: str, url: str) -> None:
-        """Generate and send a QR code image for an Expo tunnel URL."""
+    async def _send_expo_qr(
+        self, channel_id: str, url: str, redirect_url: str | None = None,
+    ) -> None:
+        """Send Expo tunnel info: inline button (if redirect), QR, and text URL."""
+        # 1. HTTPS inline button (one-tap open on iOS)
+        if redirect_url:
+            await self._messenger.send_message(
+                channel_id,
+                "Tap to open in Expo Go:",
+                link_url=redirect_url,
+                link_label="Open in Expo Go",
+            )
+
+        # 2. QR code image
         import segno
 
         tmp_path = None
@@ -466,7 +482,8 @@ class Orchestrator:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
-        # Send plain text URL for easy copy-paste
+
+        # 3. Plain text URL for easy copy-paste
         await self._messenger.send_message(channel_id, url)
 
     async def _handle_template_command(
