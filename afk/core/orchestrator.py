@@ -7,8 +7,6 @@ EventRenderer (subscribes to the EventBus).
 from __future__ import annotations
 
 import logging
-import os
-import tempfile
 from typing import TYPE_CHECKING
 
 from afk.core.commands import Commands
@@ -436,8 +434,11 @@ class Orchestrator:
                 await self._send_multi_service_info(channel_id, tunnel_info)
             elif tunnel_info["tunnel_type"] == "expo":
                 url = tunnel_info["public_url"]
-                await self._send_expo_qr(
-                    channel_id, url, tunnel_info.get("redirect_url"),
+                redirect_url = tunnel_info.get("redirect_url")
+                await self._messenger.send_message(
+                    channel_id, f"Tunnel already running: {url}",
+                    link_url=redirect_url or url,
+                    link_label="Open in Expo Go" if redirect_url else "Open in browser",
                 )
             else:
                 url = tunnel_info["public_url"]
@@ -464,16 +465,16 @@ class Orchestrator:
                 )
                 if info:
                     await self._send_multi_service_info(channel_id, info)
-            elif (info and info["tunnel_type"] == "expo") or (
-                not info and result.urls.get("default", "").startswith("exp://")
-            ):
+            elif info and info["tunnel_type"] == "expo":
                 url = result.urls.get("default", "")
+                redirect_url = info.get("redirect_url")
                 await self._messenger.edit_message(
                     channel_id, msg_id, "✅ Expo tunnel active",
                 )
-                redirect_url = info.get("redirect_url") if info else None
-                await self._send_expo_qr(
-                    channel_id, url, redirect_url,
+                await self._messenger.send_message(
+                    channel_id, url,
+                    link_url=redirect_url or url,
+                    link_label="Open in Expo Go" if redirect_url else "Open in browser",
                 )
             else:
                 url = result.urls.get("default", "")
@@ -508,44 +509,6 @@ class Orchestrator:
                 f"  {svc['name']} (port {svc['port']}, {status}): {url_part}"
             )
         await self._messenger.send_message(channel_id, "\n".join(lines))
-
-    async def _send_expo_qr(
-        self, channel_id: str, url: str, redirect_url: str | None = None,
-    ) -> None:
-        """Send Expo tunnel info: inline button (if redirect), QR, and text URL."""
-        # 1. HTTPS inline button (one-tap open on iOS)
-        if redirect_url:
-            await self._messenger.send_message(
-                channel_id,
-                "Tap to open in Expo Go:",
-                link_url=redirect_url,
-                link_label="Open in Expo Go",
-            )
-
-        # 2. QR code image
-        import segno
-
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                suffix=".png", delete=False
-            ) as tmp:
-                tmp_path = tmp.name
-            segno.make(url).save(tmp_path, scale=8, border=2)
-            await self._messenger.send_photo(
-                channel_id, tmp_path, caption="Scan with Expo Go"
-            )
-        except Exception as e:
-            logger.warning("Failed to send QR code: %s", e)
-        finally:
-            if tmp_path:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-
-        # 3. Plain text URL for easy copy-paste
-        await self._messenger.send_message(channel_id, url)
 
     async def _handle_template_command(
         self, channel_id: str, args: list[str]

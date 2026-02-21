@@ -100,14 +100,14 @@ class ExpoTunnelProcess:
             stderr=asyncio.subprocess.PIPE,
         )
 
-        # 4. Parse HTTPS URL and convert to exp://
-        https_url = await self._wait_for_tunnel_url()
-        self._public_url = self._https_to_exp(https_url)
-        logger.info("Expo tunnel URL: %s (via %s)", self._public_url, https_url)
+        # 4. Parse HTTPS URL from cloudflared
+        self._public_url = await self._wait_for_tunnel_url()
+        logger.info("Expo tunnel URL: %s", self._public_url)
 
-        # 5. Start HTTPS redirect tunnel (best-effort; graceful fallback)
+        # 5. Start HTTPS redirect tunnel for iOS one-tap (exp:// deep link)
+        exp_url = self._https_to_exp(self._public_url)
         self._redirect = RedirectTunnel()
-        await self._redirect.start(self._public_url)
+        await self._redirect.start(exp_url)
 
         return self._public_url
 
