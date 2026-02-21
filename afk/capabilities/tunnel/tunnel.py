@@ -96,8 +96,8 @@ def detect_dev_server(worktree_path: str) -> DevServerConfig | None:
     if _is_expo_project(wt, pkg):
         port = find_free_port()
         pm = _detect_package_manager(wt)
-        # Use npx expo start --tunnel --port PORT
-        cmd = ["npx", "expo", "start", "--tunnel", "--port", str(port)]
+        # Start Metro dev server only; tunneling is handled by cloudflared
+        cmd = ["npx", "expo", "start", "--port", str(port)]
         return DevServerConfig(command=cmd, port=port, framework="expo")
 
     # Standard web project — requires a "dev" script

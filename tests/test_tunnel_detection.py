@@ -163,7 +163,7 @@ class TestDetectDevServerExpo:
         assert config is not None
         assert config.framework == "expo"
         assert "expo" in config.command
-        assert "--tunnel" in config.command
+        assert "--tunnel" not in config.command  # cloudflared handles tunneling
         assert config.port > 0
 
     def test_expo_without_dev_script(self, tmp_path: Path):

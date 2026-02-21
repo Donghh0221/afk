@@ -441,9 +441,10 @@ class Orchestrator:
                 )
             else:
                 url = tunnel_info["public_url"]
+                link_url = url if url.startswith(("http://", "https://")) else None
                 await self._messenger.send_message(
                     channel_id, f"Tunnel already running: {url}",
-                    link_url=url, link_label="Open in browser",
+                    link_url=link_url, link_label="Open in browser" if link_url else None,
                 )
             return
 
@@ -463,22 +464,27 @@ class Orchestrator:
                 )
                 if info:
                     await self._send_multi_service_info(channel_id, info)
-            elif info and info["tunnel_type"] == "expo":
+            elif (info and info["tunnel_type"] == "expo") or (
+                not info and result.urls.get("default", "").startswith("exp://")
+            ):
                 url = result.urls.get("default", "")
                 await self._messenger.edit_message(
                     channel_id, msg_id, "✅ Expo tunnel active",
                 )
+                redirect_url = info.get("redirect_url") if info else None
                 await self._send_expo_qr(
-                    channel_id, url, info.get("redirect_url"),
+                    channel_id, url, redirect_url,
                 )
             else:
                 url = result.urls.get("default", "")
                 await self._messenger.edit_message(
                     channel_id, msg_id, "✅ Tunnel active",
                 )
+                # Only use inline button for http(s) URLs
+                link_url = url if url.startswith(("http://", "https://")) else None
                 await self._messenger.send_message(
                     channel_id, url,
-                    link_url=url, link_label="Open in browser",
+                    link_url=link_url, link_label="Open in browser" if link_url else None,
                 )
         except RuntimeError as e:
             await self._messenger.edit_message(

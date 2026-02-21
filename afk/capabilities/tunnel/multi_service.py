@@ -7,6 +7,8 @@ import re
 import shutil
 from dataclasses import dataclass, field
 
+import aiohttp
+
 from afk.capabilities.tunnel.base import DevServerConfig
 from afk.capabilities.tunnel.config import ServiceConfig, TunnelConfig, find_free_port
 
@@ -156,19 +158,42 @@ class MultiServiceTunnelProcess:
     async def _wait_for_service(
         self, name: str, port: int, timeout: float = 30.0,
     ) -> None:
-        """Wait for TCP port to accept connections."""
+        """Wait for service to be ready (TCP port open + HTTP responding)."""
         deadline = asyncio.get_event_loop().time() + timeout
+        port_open = False
+
         while asyncio.get_event_loop().time() < deadline:
+            # 1. Wait for TCP port to open
+            if not port_open:
+                try:
+                    _, writer = await asyncio.wait_for(
+                        asyncio.open_connection("127.0.0.1", port), timeout=1.0,
+                    )
+                    writer.close()
+                    await writer.wait_closed()
+                    port_open = True
+                    logger.debug("Service %s port %d open", name, port)
+                except (OSError, asyncio.TimeoutError):
+                    await asyncio.sleep(0.5)
+                    continue
+
+            # 2. Verify HTTP readiness (prevents 502 from cloudflared)
             try:
-                _, writer = await asyncio.wait_for(
-                    asyncio.open_connection("127.0.0.1", port), timeout=1.0,
-                )
-                writer.close()
-                await writer.wait_closed()
-                logger.info("Service %s ready on port %d", name, port)
-                return
-            except (OSError, asyncio.TimeoutError):
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"http://127.0.0.1:{port}/",
+                        timeout=aiohttp.ClientTimeout(total=2),
+                    ):
+                        logger.info("Service %s ready on port %d (HTTP OK)", name, port)
+                        return
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
                 await asyncio.sleep(0.5)
+
+        if port_open:
+            # Port is open but HTTP not ready — proceed anyway (some services
+            # may not respond on / but still work through cloudflared)
+            logger.warning("Service %s port %d open but HTTP check failed, proceeding", name, port)
+            return
         raise RuntimeError(f"Service {name} did not start on port {port} within {timeout}s")
 
     async def _wait_for_tunnel_url(
